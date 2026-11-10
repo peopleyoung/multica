@@ -20,10 +20,10 @@ MULTICA_APP_URL=https://multica.example.com
 MULTICA_PUBLIC_URL=https://api.multica.example.com
 ```
 
-さらにメールサービスを 1 つ選ぶ必要があります。選ばない場合、認証コードと招待はサーバーログに書き込まれるだけです。
+メール配信は通知と招待の任意設定です。ユーザー名とパスワードによるログインではメールを送信しません。
 
 <Callout type="warning">
-`JWT_SECRET` は本番環境で必須です。`APP_ENV=production` の場合、値が空または既知のプレースホルダーだとバックエンドが起動を拒否します（`openssl rand -hex 32` で生成）。`MULTICA_DEV_VERIFICATION_CODE` も設定しないでください。
+`JWT_SECRET` は本番環境で必須です。`APP_ENV=production` の場合、値が空または既知のプレースホルダーだとバックエンドが起動を拒否します（`openssl rand -hex 32` で生成）。
 </Callout>
 
 ## API とデータベース
@@ -110,12 +110,11 @@ primary とレプリカの接続上限は独立しています。全 API プロ�
 | 変数 | デフォルト | 説明 |
 |---|---|---|
 | `ALLOW_SIGNUP` | `true` | allowlist が一つも設定されていない場合に新規登録を許可するか |
-| `ALLOWED_EMAILS` | 空 | 登録を許可する完全なメールアドレス。カンマ区切り |
-| `ALLOWED_EMAIL_DOMAINS` | 空 | 登録を許可するメールドメイン。カンマ区切り |
+| `ALLOWED_EMAILS` | 空 | 旧確認済みメールポリシー。いずれかのメール allowlist を設定すると公開パスワード登録は無効になります |
+| `ALLOWED_EMAIL_DOMAINS` | 空 | 旧確認済みメールポリシー。いずれかのメール allowlist を設定すると公開パスワード登録は無効になります |
 | `DISABLE_WORKSPACE_CREATION` | `false` | すべてのユーザーのワークスペース新規作成を禁止。owner/admin の例外はありません |
-| `MULTICA_DEV_VERIFICATION_CODE` | 空 | 非 production 環境で使う固定 6 桁のテスト認証コード |
 
-allowlist の正確な判定順序は[ログインとサインアップ](/auth-setup#サインアップ制限)を参照してください。
+allowlist の正確な判定順序は[ログインとサインアップ](/auth-setup)を参照してください。
 
 ## 添付ファイルストレージ
 
@@ -159,8 +158,8 @@ allowlist の正確な判定順序は[ログインとサインアップ](/auth-s
 | `REDIS_URL` | 空 | 共有レート制限、リアルタイムイベント、チャンネル WebSocket リース、token cache など、すべての Redis 機能が使用する唯一の接続 URL |
 | `REDIS_CLUSTER_MODE` | `false` | `true` にすると、`REDIS_URL` が単一の設定エンドポイントでも Redis Cluster クライアントを使用します。クラスターモードではデータベース 0 と `REALTIME_RELAY_MODE=sharded` が必要です |
 | `REDIS_DISABLE_CLIENT_NAME` | `false` | マネージド Redis が `CLIENT SETNAME` を禁止している場合に `true` を設定 |
-| `RATE_LIMIT_AUTH` | `5` | 認証コード送信または Google ログイン開始の、IP あたり毎分の回数 |
-| `RATE_LIMIT_AUTH_VERIFY` | `20` | 認証コード検証の、IP あたり毎分の回数 |
+| `RATE_LIMIT_AUTH` | `5` | IP ごとの毎分の登録、パスワードログイン、旧 Google リクエスト数 |
+| `RATE_LIMIT_AUTH_VERIFY` | `20` | 廃止済みメール認証コード API のみ。パスワードログインには適用しません |
 | `RATE_LIMIT_INVITATION_ACTOR_10M` | `10` | 招待者ごとの 10 分間スライディングウィンドウ内のワークスペース招待数。`0` でこの制限を無効化 |
 | `RATE_LIMIT_INVITATION_WORKSPACE_24H` | `50` | ワークスペース内の全管理者による 24 時間スライディングウィンドウ内の招待総数。`0` でこの制限を無効化 |
 | `RATE_LIMIT_INVITATION_RECIPIENT_24H` | `6` | 正規化された同一受信メールアドレスがワークスペースをまたいで 24 時間スライディングウィンドウ内に受け取れる招待数。`0` でこの制限を無効化 |
@@ -198,34 +197,43 @@ allowlist の正確な判定順序は[ログインとサインアップ](/auth-s
 
 ## サーバーサイド LLM
 
-このグループは、会話タイトルなどサーバー側の補助生成機能の設定です。エージェントの実行時に使う AI コーディングツールの資格情報ではありません。
+補助生成と Multica Native の実行は、デプロイで指定した単一の OpenAI 互換 API とモデルを使用します。上流のキーは API サーバーが保持し、ネイティブデーモンは実行権限を検証する API を通してモデルを呼び出します。
 
 | 変数 | デフォルト | 説明 |
 |---|---|---|
 | `MULTICA_LLM_API_KEY` | 空 | OpenAI 互換の API key |
 | `MULTICA_LLM_BASE_URL` | 空 | OpenAI 互換の endpoint |
-| `MULTICA_LLM_DEFAULT_MODEL` | `gpt-5.6-luna` | リクエストがモデルを指定しない場合に使用 |
+| `MULTICA_LLM_DEFAULT_MODEL` | `gpt-5.6-luna` | サーバー LLM 呼び出しで許可する唯一のモデル |
+| `MULTICA_LLM_CAPABILITIES_JSON` | 空 | 検証済みのネイティブ能力。空の場合はネイティブ実行を無効化 |
+| `MULTICA_LLM_LIMITS_JSON` | 組み込み上限 | 全 API レプリカ・用途で PostgreSQL クォータを共有。SDK リトライは別途計数 |
 | `MULTICA_LLM_MAX_RETRIES` | `2` | 1 回の呼び出しあたりのリトライ上限。`0` はリトライ無効、`1`〜`5` は最大 N 回 |
-| `MULTICA_LLM_DISABLE_THINKING` | `false` | すべてのリクエストに `chat_template_kwargs: {"enable_thinking": false}` を付加。このフィールドを解釈する gateway 用 |
+| `MULTICA_LLM_DISABLE_THINKING` | `false` | 補助生成リクエストに `chat_template_kwargs: {"enable_thinking": false}` を付加。このフィールドを解釈する gateway 用 |
 
-`MULTICA_LLM_MAX_RETRIES` はリトライポリシーの唯一の設定元です。未設定ならデフォルトの 2 回、`0` なら 1 回の呼び出しにつきリクエストは 1 回だけ、1〜5 ならリトライは最大その回数までになります。これは割り当てではなく上限です。消費するのはリトライ対象の失敗だけで、成功や呼び出し側自身のデッドラインによって早く終わることもあります。それ以外の値（負数、非数値、5 超過）は静かに補正されるのではなく起動に失敗します。上限はレイテンシ予算です。バックオフは 0.5 秒から始まり 8 秒を上限に倍増するため、これより大きい予算は呼び出し側自身のタイムアウトを超え、リトライ可能な失敗をタイムアウトに変えてしまいます。リトライの対象は接続失敗と HTTP 408、409、429、5xx で、それ以外の 4xx はそのまま返されます。サーバーは起動時に有効なポリシーを `llm retry policy` として記録しますが、その行に資格情報は含まれません。
+すべての API レプリカで同じ上限を設定してください。既定の全体/ワークスペース上限は、同時実行 16/4、毎分リクエスト 600/60、毎分 Token 4,000,000/1,000,000 です。JSON で `global_concurrent`、`workspace_concurrent`、`global_requests_per_minute`、`workspace_requests_per_minute`、`global_tokens_per_minute`、`workspace_tokens_per_minute` の正の値を部分指定できます。各試行前に入力バイト数と出力上限を予約し、画像では宣言済みコンテキスト長以上を予約します。有効な使用量で精算し、未報告時は見積もりを維持します。これは Token の受付予算であり、金額の支出上限ではありません。
 
-`MULTICA_LLM_DISABLE_THINKING` は、モデルが推論（thinking）パスを実行してアシスト呼び出しのレイテンシ予算を食いつぶす gateway 向けの設定です。`true`（または `1`）にすると、サーバーはすべてのリクエストボディに `chat_template_kwargs: {"enable_thinking": false}` を付加します。このフィールドを転送する gateway（vLLM/sglang 系のデプロイや、GLM/Qwen 系の一部 LiteLLM ルート）は、thinking パスを省略します。標準の OpenAI endpoint は未知のボディフィールドを拒否するため、上流が受け付ける場合のみ有効にしてください。GPT-5.6 系モデルはフォローアップ質問のリクエストではサーバーが既に `reasoning_effort: none` を付けます。チャットの自動タイトル生成は推論フィールドを送信しません。本設定がそれに影響するのは、構成された上流が `chat_template_kwargs` を受け付ける場合だけです。指定できる値は `true`/`false` と `1`/`0`（大文字小文字を区別しない）で、それ以外は起動に失敗します。起動ログにはリトライポリシーと併せて有効な状態が記録されます。
+API サーバーで `MULTICA_LLM_DEFAULT_MODEL` と検証済みの `MULTICA_LLM_CAPABILITIES_JSON` を明示してください。以下は形式例であり、モデルの制限値ではありません。
 
-このレイヤーを使う機能は 2 つあり、どちらも設定した endpoint にチャットの内容を送信します。
+```json
+{"streaming_tool_calls":true,"json_object":true,"context_tokens":32768,"max_output_tokens":4096,"max_tool_argument_bytes":65536,"max_tools":64}
+```
 
-- **会話タイトルの自動生成** — 新しいチャットセッションでユーザーが最初に送ったメッセージを、そのまま送信します。添付ファイルは含まれません。
-- **フォローアップ質問**（エージェントの返信の下に表示されるボタン） — 会話の末尾を送信します。最大 6 メッセージで、対象の返信は 3000 文字、それより古いメッセージは各 800 文字が上限です。
+ランタイム画面で実行用コンピュータを選びます。各コンピュータは Multica Native を登録します。エージェントはデプロイモデルを使用し、任意のモデル指定や CLI プロファイルは拒否されます。 ファイル書き込みとシェルは既定で無効です。必要に応じて `MULTICA_NATIVE_ALLOW_WRITE=true` と `MULTICA_NATIVE_ALLOW_SHELL=true` を個別に設定します。シェルはデーモンユーザーの OS 権限で動作します。隔離にはコンテナ、VM または専用ユーザーを使用してください。
 
-API key と base URL の両方が空の場合、このレイヤーは無効になり、上流へのリクエストを一切行いません。上記 2 つの機能はどちらも何も送信しなくなります。このレイヤーからチャットの内容をデプロイ外へ出せないポリシーでは、これがサポートされた構成です。セッションはクライアントが最初のメッセージから生成したタイトルをそのまま使い、フォローアップ質問のボタンは表示されず、他の機能への影響はありません。
+| 変数 | デフォルト | 説明 |
+|---|---|---|
+| `MULTICA_NATIVE_RUNTIME` | `true` | 必須のネイティブ実行。未設定でも有効で、`false` は起動エラーになります。 |
+| `MULTICA_NATIVE_ALLOW_WRITE` | `false` | 作業ディレクトリ内のファイル書き込みを許可 |
+| `MULTICA_NATIVE_ALLOW_SHELL` | `false` | デーモンユーザーのファイルとネットワーク権限で Shell を許可 |
 
-<Callout type="info">
-これは補助生成レイヤーのみに関する説明です。エージェントの実行は別のデータ経路です。エージェントがチャットに応答するとき、デーモンはそのエージェントの AI コーディングツールをツール自身の資格情報で実行し、上記の `MULTICA_LLM_*` 設定をツールへ渡すことはありません。（エージェント自身が必要とする実行単位の Multica 接続用変数は、デーモンが別途注入します。）上記の変数を空にしてもこの経路には影響しないため、エージェントのランタイム設定側で制御してください。
-</Callout>
+Multica Native は MCP、プラグイン、添付ファイル、成果物、コンテキスト圧縮に対応します。結果が不明な書き込みは自動再実行しません。
+
+補助生成はタイトル用の最初のメッセージと提案用の最大六件の末尾メッセージを送ります。ネイティブ実行はシステム指示、会話、ツール定義と結果を送ります。キーと base URL の両方を空にすると全てのサーバーモデル呼び出しが無効になり、補助機能は縮退し、ネイティブ実行は設定不足を報告します。既存の外部ランタイムは移行まで独自の資格情報を使用します。
+
+一部を受信したネイティブストリームと実行全体は自動再試行しません。応答ヘッダー前の再試行は `MULTICA_LLM_MAX_RETRIES` に従います。`MULTICA_LLM_DISABLE_THINKING` は補助生成にのみ適用します。
 
 ## デーモン設定
 
-以下の変数は、エージェントを実行するコンピューター上で読み込まれます。API コンテナ内ではありません。
+Multica は API 経由でデプロイの単一モデルを直接呼び出します。実行用コンピュータには Multica デーモンをインストールします。外部 AI CLI のインストールやログインは不要です。
 
 | 変数 | デフォルト | 説明 |
 |---|---|---|
@@ -239,44 +247,12 @@ API key と base URL の両方が空の場合、このレイヤーは無効に�
 | `MULTICA_AGENT_TIMEOUT` | `0` | 1 回の実行の絶対時間上限。`0` は上限なし |
 | `MULTICA_AGENT_IDLE_WATCHDOG` | `2h` | 出力もツール実行もない状態の静穏上限。`0` で watchdog 全体を無効化 |
 | `MULTICA_AGENT_TOOL_WATCHDOG` | `MULTICA_AGENT_IDLE_WATCHDOG` と同じ | 単一のツール呼び出しが静穏なままでいられる上限。モデルより長い余裕をツールに与えたい場合のみ設定し、`0` はツール実行中に強制停止しません。Cursor のバックグラウンドシェルは、起動したプロセスが終了するまで実行中として扱われます。この上限に達すると、デーモンはそれらのプロセスを停止し、Cursor が最終結果を出すための新しい watchdog 予算を与えます。プロセスの所有権やクリーンアップを検証できない場合は、通常の実行キャンセル方針に従います |
-| `MULTICA_OPENCODE_IDLE_WATCHDOG` | `10m` | OpenCode 専用の静穏しきい値 |
-| `MULTICA_CODEX_SEMANTIC_INACTIVITY_TIMEOUT` | `MULTICA_AGENT_IDLE_WATCHDOG` と同じ | Codex のセマンティック静穏しきい値。Codex 自身のタイマーはツール実行中かどうかを判別できないため、独自の短い上限を持たず idle / tool 予算の大きい方に追従します |
-| `MULTICA_CODEX_FIRST_TURN_TIMEOUT` | `0` | Codex 初回ターンの無進捗上限を明示的に上書き；`0` はデフォルトを維持。実効の初回ターン待機は依然として `MULTICA_CODEX_SEMANTIC_INACTIVITY_TIMEOUT` と全体の実行タイムアウトに制限される——`MULTICA_CODEX_SEMANTIC_INACTIVITY_TIMEOUT` をこの値より厳密に大きく（余裕を持たせて）設定すること。さもないと待機はその値で打ち切られ、モデルカタログの起動リトライがスキップされる。同値では不十分：セマンティックタイマーが先に起動するため、同値の場合でもリトライが失われることがある |
-| `MULTICA_CODEX_HANDSHAKE_TIMEOUT` | `30s`、`thread/start`・`thread/resume`：`60s` | Codex app-server 起動ハンドシェイクの上限。明示的な値は両方の予算を一括で上書きします |
-| `MULTICA_CODEX_TURN_INTERRUPT_TIMEOUT` | `2s` | キャンセル後に Codex app-server が `turn/interrupt` を確認し `turn/completed` を送信するまでの猶予時間。プロセスを強制終了する前に最終トークン使用量を保持します。特に遅いホストでは daemon ログに記録された割り込み遅延を基に調整できます |
 | `MULTICA_DAEMON_AUTO_UPDATE` | Cloud は `true`、セルフホストは `false` | CLI の更新を自動でチェックして適用するか |
 | `MULTICA_DAEMON_AUTO_UPDATE_INTERVAL` | `6h` | 更新チェックの間隔 |
 | `MULTICA_DAEMON_AUTO_RELOAD` | `true` | 帯域外で置き換えられた `multica` バイナリ（`brew upgrade`、再ダウンロード、ローカルビルド）へ再起動して追従するかどうか。`MULTICA_DAEMON_AUTO_UPDATE` とは独立 |
 | `MULTICA_WORKSPACES_ROOT` | `~/multica_workspaces` | 実行用作業ディレクトリのルート |
 | `MULTICA_AGENT_TEMP_BASE` | `/tmp`（Linux/macOS） | Linux/macOS 専用。作業ごとのプライベート一時ディレクトリの親ディレクトリ。既存かつ書き込み可能な絶対パスである必要があり、無効な値の場合は `/tmp` にフォールバックせず作業の開始に失敗します。短いパスを選んでください。子ツールがその配下に AF_UNIX ソケットを作成する場合があり、`sun_path` の上限は Linux で 108 バイト、macOS で 104 バイトです |
 | `MULTICA_KEEP_ENV_AFTER_TASK` | `false` | デバッグ用に実行ディレクトリを保持 |
-
-デーモンがエージェント作業に注入する内部コンテキストについては、[作業ランタイム環境](/daemon-runtimes#作業ランタイム環境)を参照してください。
-
-各 AI コーディングツールは `MULTICA_<PROVIDER>_PATH` でコマンドパスを上書きでき、モデル上書き対応ツールでは `MULTICA_<PROVIDER>_MODEL` も利用できます。QwenPaw と MiniMax Code にはモデル変数がなく、MiniMax Code のパス変数は `MULTICA_MCODE_PATH` です。詳しくは [AI コーディングツール比較](/providers#モデルの取得元) を参照してください。DeepSeek Harness は `MULTICA_DSH_PATH` と `MULTICA_DSH_MODEL` に対応しています（値は dsh のモデルカタログにあるモデル ID、例: `deepseek-official/deepseek-chat`）。 DeepSeek Harness はさらに `MULTICA_DSH_PROFILE_BUNDLE` に対応しています。`multica` プロファイルが存在しない場合にインストールするバンドルを指定するもので、カンマ区切りで複数の候補を順に試します。各項目は npm のパッケージ名、ディレクトリ、またはパック済み tarball です。既定では未設定です。Multica が利用する `--stdio` プロトコルはこのプロファイルが提供するため、未設定の場合は DSH のインストールには手を加えず、デーモンは使用できないランタイムを登録する代わりにプロファイルの欠落を報告します。Multica 自身のブリッジはまだ公開 npm レジストリにないため、値の選び方は[エージェントランタイムのインストール](/install-agent-runtime)を参照してください。ここに設定した値は追加の確認なしに各デーモンホストの DSH ホームへインストールされるので、サプライチェーンの判断として扱ってください。`MULTICA_DSH_PROFILE_BUNDLE` が有効にするインストールは範囲を意図的に限定しています。実行はデーモンのライフタイムにつき最大 1 回、プローブがプロファイルの不在を確認できた場合のみです。失敗時はパッケージマネージャー自身の出力をログに記録し、再試行はデーモンの再起動後のみ行います。プローブがタイムアウトした場合や、このデーモンが扱わないプロトコルバージョンを返した場合は報告のみで、上書きインストールは行いません。意図して用意されたプロファイルをデーモンが上書きすることはありません。調査はデーモンログで `DSH runtime profile` を検索してください。取り消す場合は `$DSH_HOME/profiles/multica`（既定は `~/.dsh/profiles/multica`）を削除します。`MULTICA_DSH_PLUGIN_PATH` はインストール時に pnpm を解決するディレクトリを上書きします。`dsh plugin` が転送する pnpm は macOS でも Windows でも DSH Desktop 独自の runtime-commands ディレクトリに置かれており、デーモンはそれを自動で見つけて PATH の先頭に追加します（新しい Desktop が使うバージョン付きの構成も含みます）。したがってこの変数が必要なのは、デーモンが見つけられない場所にインストールされている場合か、独自の pnpm を使わせたい場合だけです。設定すると自動探索は完全に置き換わり、指定したディレクトリが存在しなければ、インストールは同梱の pnpm ではなくデーモンの `PATH` 上の pnpm にフォールバックします。Linux には DSH Desktop がないため、常に `PATH` が使われます。ZeroClaw は `MULTICA_ZEROCLAW_PATH` に対応しますが、モデル変数はありません。モデルは ZeroClaw のエージェント設定で管理します。マシン全体のデフォルト引数 `MULTICA_<PROVIDER>_ARGS` は、現在 Claude Code、Codex、CodeBuddy、Qwen Code、QwenPaw の 5 ツールに対応しています。対応する変数は `MULTICA_CLAUDE_ARGS`、`MULTICA_CODEX_ARGS`、`MULTICA_CODEBUDDY_ARGS`、`MULTICA_QWEN_ARGS`、`MULTICA_QWENPAW_ARGS` です。例:
-
-```dotenv
-MULTICA_CLAUDE_PATH=/opt/bin/claude
-MULTICA_CLAUDE_ARGS=--max-turns 40
-```
-
-Cursor の検証済みバックグラウンドクリーンアップには、Linux 6.9 以降（プロセスグループ pidfd）、macOS カーネルによるプロセス識別子の照会と audit token を用いたシグナル送信のサポート、または Windows で正常に割り当てられた入れ子の Job Object が必要です。macOS では各プロセスへのシグナル送信にカーネルが検証する PID version を用いるため、同一セッションのグループに参加する必要はありません。これらの macOS API は非公開であり、プロセス捕捉時に確認されます。所有権を確保できなかったバックグラウンドプロセスは元のツール結果を返し、ツール watchdog が `0` の場合も含めて通常の idle watchdog に従います。すでに所有している作業は、クリーンアップを確認できない場合も実行中のままです。ツール watchdog を `0` にした場合はこの境界自体が存在せず、所有済みのバックグラウンド作業が生きている限り実行は継続します。その場合の実行は `MULTICA_AGENT_TIMEOUT` だけに制限され、これも既定値は `0` です。
-
-所有している Cursor のバックグラウンドプロセスは、実行が正常に完了したときにも停止されます。したがって、その実行が起動したバックグラウンドサーバーが意図的に終了処理後まで生き残ることはありません。macOS は保持された元の親プロセスの識別子によって後から生まれた子プロセスを認識できますが、観測前に中間プロセスが消えた連鎖は証明できません。そのようなプロセス、追跡対象のグループから外れた作業、および継続的な所有権や送信のエラーは、バックグラウンド作業を残す可能性があります。確認できなかったクリーンアップはログに記録され、「クリーンアップ成功」による回復ウィンドウを与えることはありません。数値の PID やプロセスグループだけを根拠に未知のプロセスを終了させることはありません。
-
-優先順位はコマンドラインフラグ → 環境変数 → `~/.multica/config.json` → 組み込みデフォルトです。watchdog の動作は[デーモンとランタイム](/daemon-runtimes)を参照してください。
-
-### デーモン設定の永続化
-
-デーモン側のよく使う設定は、シェルの環境変数に頼らず `~/.multica/config.json` に書き込むこともできます。名前付きプロファイルの設定ファイルは `~/.multica/profiles/<name>/config.json` にあります:
-
-```bash
-multica config set poll_interval 10s
-multica config show
-```
-
-サポートされるキー:
-
 | キー | デフォルト | 説明 |
 |---|---|---|
 | `server_url` | `ws://localhost:8080/ws` | Multica API / WebSocket アドレス |
@@ -290,18 +266,11 @@ multica config show
 | `ws_claim_poll_interval` | `3m` | 正常な WebSocket での claim 安全ポーリング上限。`poll_interval` とは独立して設定され、Daemon は下方向のジッターを適用します |
 | `heartbeat_interval` | `15s` | ハートビート間隔 |
 | `agent_timeout` | 無制限 | 1 回の実行の絶対時間上限 |
-| `codex_semantic_inactivity_timeout` | 派生値 | Codex のセマンティック静穏しきい値。未設定なら idle と tool の watchdog 予算のうち大きい方を採用し、tool 予算が `0` の場合は idle 予算に回帰します。Codex 自身の `10m` が残るのは watchdog 一式を無効化したときだけです |
-| `codex_handshake_timeout` | `30s`、`thread/start`・`thread/resume`：`60s` | Codex app-server 起動ハンドシェイクの上限。明示的な値は両方の予算を一括で上書きします |
 | `disable_auto_update` | 環境に従う | `true` で自動更新を無効化。`false` はローカルの上書きをクリアし、環境変数またはデフォルトに戻します |
 | `auto_update_check_interval` | `6h` | 更新チェックの間隔 |
 | `disable_auto_reload` | 環境に従う | `true` でディスク上の置き換えへの追従を停止。`false` はローカルの上書きをクリア。`disable_auto_update` とは別に解決されます |
 
-値のルール:
-
-- duration 系のキーは正の Go duration（`10s`、`2h` など）を受け付け、`0s` と負の値は拒否されます。唯一の例外は `agent_timeout` で、`0s` は有効な値として実行時間上限を明示的に無効化します。
-- 空文字列を渡すと永続化された値がクリアされ、環境変数または組み込みデフォルトに戻ります。例: `multica config set poll_interval ""`。
-- `max_concurrent_tasks` には非負の整数が必要です。
-- 相対パスの `workspaces_root` は保存時に絶対パスへ変換されます。
+ファイル書き込みとシェルは既定で無効です。必要に応じて `MULTICA_NATIVE_ALLOW_WRITE=true` と `MULTICA_NATIVE_ALLOW_SHELL=true` を個別に設定します。シェルはデーモンユーザーの OS 権限で動作します。隔離にはコンテナ、VM または専用ユーザーを使用してください。
 
 ## 可観測性と分析
 

@@ -55,7 +55,7 @@ multica setup self-host
 
 This installs the `multica` CLI, checks out the latest self-host assets, pulls the official Multica images from GHCR, and configures everything for localhost.
 
-Open http://localhost:3000. To log in, configure `RESEND_API_KEY` in `.env` for email-based codes (recommended), or leave Resend unset and copy the generated code from the backend logs. See [Step 2 — Log In](#step-2--log-in) for details.
+Open http://localhost:3000 and register a username and password. Email is optional; no email service or verification code is needed.
 
 > **Prerequisites:** Docker and Docker Compose must be installed. The script checks for this and provides install links if missing.
 >
@@ -96,53 +96,27 @@ Once ready:
 
 ### Step 2 — Log In
 
-Open http://localhost:3000 in your browser. The Docker self-host stack defaults to `APP_ENV=production` (set in `docker-compose.selfhost.yml`), and there is no fixed verification code by default. Pick one of the following to log in:
+Open http://localhost:3000, choose **Create an account**, and set a username and password. Email is optional and registration signs you in immediately. No Resend or SMTP configuration is needed for authentication.
 
-- **Recommended (production):** configure `RESEND_API_KEY` in `.env`, then restart the backend. Real verification codes will be sent to the email address you enter. See [Advanced Configuration → Email](SELF_HOSTING_ADVANCED.md#email-required-for-authentication).
-- **Without email configured:** the verification code is generated server-side and printed to the backend container logs (look for `[DEV] Verification code for ...:`). Useful for one-off testing on a single machine.
-- **Deterministic local/private testing:** set `APP_ENV=development` and `MULTICA_DEV_VERIFICATION_CODE=888888` in `.env`, then restart the backend. This fixed code is ignored when `APP_ENV=production`.
-
-Changes to `ALLOW_SIGNUP`, `DISABLE_WORKSPACE_CREATION`, and `GOOGLE_CLIENT_ID` also take effect after restarting the backend / compose stack. The web UI reads all three from `/api/config` at runtime, so no web rebuild is needed. See [Advanced Configuration → Signup Controls](SELF_HOSTING_ADVANCED.md#signup-controls-optional) for the recommended sequence to lock down workspace creation.
-
-> **Warning:** do **not** set `MULTICA_DEV_VERIFICATION_CODE` on a publicly reachable instance — anyone who knows an email address can then log in with that fixed code.
+Existing users need an administrator to initialize credentials using their existing user UUID. See [account setup](apps/docs/content/docs/auth-setup.mdx). Public registration requires `ALLOW_SIGNUP=true` and empty email allowlists; contact email is never used as identity proof.
 
 ### Step 3 — Install CLI & Start Daemon
 
-The daemon runs on your local machine (not inside Docker). It detects installed AI agent CLIs, registers them with the server, and executes tasks when agents are assigned work.
+The daemon runs on your local machine (not inside Docker). It registers Multica Native with the server and executes tasks through the deployment LLM API.
 
 Each team member who wants to run AI agents locally needs to:
 
-### a) Install the CLI and an AI agent
+### a) Install Multica
 
 ```bash
 brew install multica-ai/tap/multica
 ```
 
-You also need at least one AI agent CLI installed:
-- [Claude Code](https://docs.anthropic.com/en/docs/claude-code) (`claude` on PATH)
-- [Antigravity CLI](https://antigravity.google/docs/cli-install) (`agy` on PATH)
-- [CodeBuddy Code](https://www.codebuddy.ai/docs/cli/quickstart) (`codebuddy` on PATH)
-- [DevEco Code](https://gitcode.com/openharmony-sig/deveco-code) (`deveco` on PATH)
-- [Codex](https://github.com/openai/codex) (`codex` on PATH)
-- [GitHub Copilot CLI](https://docs.github.com/en/copilot) (`copilot` on PATH)
-- [OpenClaw](https://github.com/openclaw/openclaw) (`openclaw` on PATH)
-- [OpenCode](https://github.com/anomalyco/opencode) (`opencode` on PATH)
-- [Huawei Cloud CodeArts](https://support.huaweicloud.com/qs-codeartssnap/codeartsagent_qs_0004.html) (`codearts` on PATH)
-- [Hermes](https://github.com/NousResearch/hermes) (`hermes` on PATH)
-- [Pi](https://pi.dev/) (`pi` on PATH)
-- [Cursor Agent](https://cursor.com/) (`cursor-agent` on PATH)
-- Kimi (`kimi` on PATH)
-- [Reasonix](https://github.com/esengine/DeepSeek-Reasonix) (`reasonix` on PATH; run `reasonix setup` first)
-- Dim (`dim` on PATH)
-- Kiro CLI (`kiro-cli` on PATH)
-- Qoder CLI (`qodercli` on PATH)
-- Qoder CN CLI (`qoderclicn` on PATH)
-- Trae CLI (`traecli` on PATH)
-- [Grok Build CLI](https://docs.x.ai/) (`grok` on PATH)
-- Qwen Code (`qwen` on PATH)
-- [QwenPaw](https://github.com/agentscope-ai/QwenPaw) (`qwenpaw` on PATH; pick its model in QwenPaw's own configuration)
-- [MiniMax Code CLI](https://www.npmjs.com/package/@minimax-ai/code) (`mcode` 0.1.2+ on PATH). Install a supported Node.js release (`>=22.19 <23` or `>=24 <27`), run `npm install --global @minimax-ai/code@latest`, then `mcode login`.
-- [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) (`dsh` on PATH with the Multica runtime profile installed; set `DEEPSEEK_API_KEY`)
+Configure the API service with `MULTICA_LLM_API_KEY`, `MULTICA_LLM_BASE_URL`, and `MULTICA_LLM_DEFAULT_MODEL`. Set the capabilities and shared limits with `MULTICA_LLM_CAPABILITIES_JSON` and `MULTICA_LLM_LIMITS_JSON`; see [.env.example](.env.example). All agents and auxiliary generation use the same model. Missing configuration produces an explicit error before inference.
+
+External AI CLIs and their accounts are not required. File writes and shell tools are disabled by default; set `MULTICA_NATIVE_ALLOW_WRITE=true` and `MULTICA_NATIVE_ALLOW_SHELL=true` separately on the daemon host when needed. Model credentials stay on the API service.
+
+Existing deployments must inventory, drain, and migrate their bindings before upgrading the daemon. Use the [migration runbook](docs/engineering/native-runtime-migration.zh.md). After native writes, rollback requires a reviewed restore window rather than replaying the queue on an older executor.
 
 ### b) One-command setup
 
@@ -229,8 +203,7 @@ kubectl -n multica create secret generic multica-secrets \
   --from-literal=POSTGRES_PASSWORD="$(openssl rand -hex 16)" \
   --from-literal=RESEND_API_KEY="" \
   --from-literal=GOOGLE_CLIENT_SECRET="" \
-  --from-literal=CLOUDFRONT_PRIVATE_KEY="" \
-  --from-literal=MULTICA_DEV_VERIFICATION_CODE=""
+  --from-literal=CLOUDFRONT_PRIVATE_KEY=""
 ```
 
 Leave optional values empty for now — you can fill them in later (see [Step 5 — Log In](#step-5--log-in)).
@@ -282,39 +255,7 @@ Then open http://multica.dev.lan in your browser.
 
 ### Step 5 — Log In
 
-The chart defaults to `APP_ENV=production` (set in `values.yaml` under `backend.config.appEnv`), and there is no fixed verification code by default. Pick one of the following to log in — the same three options as the Docker setup:
-
-- **Recommended (production):** patch the Secret with a real Resend key, then restart the backend:
-
-  ```bash
-  kubectl -n multica patch secret multica-secrets --type=merge \
-    -p '{"stringData":{"RESEND_API_KEY":"re_xxx"}}'
-  kubectl -n multica rollout restart deploy/multica-backend
-  ```
-
-  Real verification codes will be sent to the email address you enter. See [Advanced Configuration → Email](SELF_HOSTING_ADVANCED.md#email-required-for-authentication).
-
-- **Without email configured:** the verification code is generated server-side and printed to the backend pod logs (look for `[DEV] Verification code for ...:`). Useful for one-off testing.
-
-  ```bash
-  kubectl -n multica logs -f deploy/multica-backend | grep "Verification code"
-  ```
-
-- **Deterministic local/private testing:** set `backend.config.appEnv: development` in your values file and `MULTICA_DEV_VERIFICATION_CODE=888888` in the Secret, then `helm upgrade` and restart. This fixed code is ignored when `APP_ENV=production`.
-
-  ```bash
-  helm upgrade multica oci://ghcr.io/multica-ai/charts/multica \
-    --version <chart-version> \
-    -n multica \
-    -f my-values.yaml --set backend.config.appEnv=development
-  kubectl -n multica patch secret multica-secrets --type=merge \
-    -p '{"stringData":{"MULTICA_DEV_VERIFICATION_CODE":"888888"}}'
-  kubectl -n multica rollout restart deploy/multica-backend
-  ```
-
-`ALLOW_SIGNUP`, `DISABLE_WORKSPACE_CREATION`, and `GOOGLE_CLIENT_ID` likewise live under `backend.config.*` in `values.yaml` (as `allowSignup`, `disableWorkspaceCreation`, and `googleClientId`). After `helm upgrade`, the backend pod will roll automatically because the ConfigMap hash changes; the web UI reads all three from `/api/config` at runtime, so no web rebuild is needed.
-
-> **Warning:** do **not** set `MULTICA_DEV_VERIFICATION_CODE` on a publicly reachable instance — anyone who knows an email address can then log in with that fixed code.
+Open the frontend and register a username and password. Email is optional; no verification code is sent. Use `ALLOW_SIGNUP=false` to close public registration. Existing users retain their history and memberships when administrators initialize credentials by UUID with `/app/account-admin` in the backend image.
 
 ### Step 6 — Install CLI & Start Daemon
 

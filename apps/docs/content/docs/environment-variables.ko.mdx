@@ -20,10 +20,10 @@ MULTICA_APP_URL=https://multica.example.com
 MULTICA_PUBLIC_URL=https://api.multica.example.com
 ```
 
-이메일 서비스도 하나 선택해야 합니다. 설정하지 않으면 인증 코드와 초대가 서버 로그에만 기록됩니다.
+이메일 전송은 알림과 초대를 위한 선택 설정입니다. 사용자 이름과 비밀번호 로그인에는 이메일을 보내지 않습니다.
 
 <Callout type="warning">
-`JWT_SECRET`은 프로덕션에서 필수입니다. `APP_ENV=production`일 때 비어 있거나 알려진 자리표시자 값이면 백엔드가 부팅을 거부합니다(`openssl rand -hex 32`로 생성). `MULTICA_DEV_VERIFICATION_CODE`도 설정하지 마세요.
+`JWT_SECRET`은 프로덕션에서 필수입니다. `APP_ENV=production`일 때 비어 있거나 알려진 자리표시자 값이면 백엔드가 부팅을 거부합니다(`openssl rand -hex 32`로 생성).
 </Callout>
 
 ## API와 데이터베이스
@@ -110,12 +110,11 @@ primary와 복제본의 연결 한도는 서로 독립적입니다. 모든 API �
 | 변수 | 기본값 | 설명 |
 |---|---|---|
 | `ALLOW_SIGNUP` | `true` | allowlist가 없을 때 새 계정 생성 허용 여부 |
-| `ALLOWED_EMAILS` | 비어 있음 | 가입을 허용할 전체 이메일 주소, 쉼표로 구분 |
-| `ALLOWED_EMAIL_DOMAINS` | 비어 있음 | 가입을 허용할 이메일 도메인, 쉼표로 구분 |
+| `ALLOWED_EMAILS` | 비어 있음 | 기존 인증 이메일 정책. 이메일 허용 목록이 있으면 공개 비밀번호 가입은 비활성화됨 |
+| `ALLOWED_EMAIL_DOMAINS` | 비어 있음 | 기존 인증 이메일 정책. 이메일 허용 목록이 있으면 공개 비밀번호 가입은 비활성화됨 |
 | `DISABLE_WORKSPACE_CREATION` | `false` | 모든 사용자의 새 워크스페이스 생성을 금지. owner/admin 예외 없음 |
-| `MULTICA_DEV_VERIFICATION_CODE` | 비어 있음 | production이 아닌 환경에서 사용하는 고정 6자리 테스트 인증 코드 |
 
-allowlist의 정확한 판단 순서는 [로그인과 가입](/auth-setup#가입-범위-제어)을 참고하세요.
+allowlist의 정확한 판단 순서는 [로그인과 가입](/auth-setup)을 참고하세요.
 
 ## 첨부 파일 저장소
 
@@ -159,8 +158,8 @@ allowlist의 정확한 판단 순서는 [로그인과 가입](/auth-setup#가입
 | `REDIS_URL` | 비어 있음 | 공유 rate limit, 실시간 이벤트, 채널 WebSocket lease, token cache 등 모든 Redis 기능이 사용하는 유일한 연결 URL |
 | `REDIS_CLUSTER_MODE` | `false` | `true`로 설정하면 `REDIS_URL`이 단일 구성 엔드포인트여도 Redis Cluster 클라이언트를 사용합니다. 클러스터 모드에서는 데이터베이스 0과 `REALTIME_RELAY_MODE=sharded`가 필요합니다 |
 | `REDIS_DISABLE_CLIENT_NAME` | `false` | 관리형 Redis가 `CLIENT SETNAME`을 금지하면 `true`로 설정 |
-| `RATE_LIMIT_AUTH` | `5` | IP당 1분에 인증 코드 전송 또는 Google 로그인 시작 허용 횟수 |
-| `RATE_LIMIT_AUTH_VERIFY` | `20` | IP당 1분에 인증 코드 검증 허용 횟수 |
+| `RATE_LIMIT_AUTH` | `5` | IP당 분당 가입, 비밀번호 로그인 또는 기존 Google 요청 수 |
+| `RATE_LIMIT_AUTH_VERIFY` | `20` | 폐기된 이메일 인증 코드 API에만 적용하며 비밀번호 로그인에는 적용하지 않음 |
 | `RATE_LIMIT_INVITATION_ACTOR_10M` | `10` | 초대자별 10분 슬라이딩 윈도 내 워크스페이스 초대 생성 횟수. `0`이면 이 제한을 비활성화 |
 | `RATE_LIMIT_INVITATION_WORKSPACE_24H` | `50` | 워크스페이스의 모든 관리자가 24시간 슬라이딩 윈도 내 생성할 수 있는 총 초대 수. `0`이면 이 제한을 비활성화 |
 | `RATE_LIMIT_INVITATION_RECIPIENT_24H` | `6` | 정규화된 동일 수신 이메일이 워크스페이스 전체에서 24시간 슬라이딩 윈도 내 받을 수 있는 초대 수. `0`이면 이 제한을 비활성화 |
@@ -198,34 +197,43 @@ reverse proxy 뒤에 배포한다면 실제 proxy 네트워크를 입력해야 �
 
 ## 서버 측 LLM
 
-이 설정 그룹은 대화 제목 같은 서버 측 보조 생성 기능에 사용됩니다. 에이전트 실행에 사용하는 AI 코딩 도구의 자격 증명이 아닙니다.
+보조 생성과 Multica Native 실행은 배포에서 지정한 단일 OpenAI 호환 API와 모델을 사용합니다. 업스트림 키는 API 서버만 보관하며, 네이티브 데몬은 실행 권한을 검증하는 API를 통해 모델을 호출합니다.
 
 | 변수 | 기본값 | 설명 |
 |---|---|---|
 | `MULTICA_LLM_API_KEY` | 비어 있음 | OpenAI 호환 API key |
 | `MULTICA_LLM_BASE_URL` | 비어 있음 | OpenAI 호환 endpoint |
-| `MULTICA_LLM_DEFAULT_MODEL` | `gpt-5.6-luna` | 요청에 모델이 지정되지 않았을 때 사용 |
+| `MULTICA_LLM_DEFAULT_MODEL` | `gpt-5.6-luna` | 서버 LLM 호출에 허용되는 유일한 모델 |
+| `MULTICA_LLM_CAPABILITIES_JSON` | 비어 있음 | 검증된 네이티브 모델 기능. 비워 두면 네이티브 실행 비활성화 |
+| `MULTICA_LLM_LIMITS_JSON` | 기본 한도 | 모든 API 복제본과 용도가 PostgreSQL 할당량 공유. SDK 재시도는 별도로 집계 |
 | `MULTICA_LLM_MAX_RETRIES` | `2` | 호출당 재시도 상한. `0`은 재시도 비활성화, `1`–`5`는 최대 N회 |
-| `MULTICA_LLM_DISABLE_THINKING` | `false` | 모든 요청에 `chat_template_kwargs: {"enable_thinking": false}`를 첨부. 해당 필드를 해석하는 gateway용 |
+| `MULTICA_LLM_DISABLE_THINKING` | `false` | 보조 생성 요청에 `chat_template_kwargs: {"enable_thinking": false}`를 첨부. 해당 필드를 해석하는 gateway용 |
 
-`MULTICA_LLM_MAX_RETRIES`는 재시도 정책의 유일한 설정 소스입니다. 설정하지 않으면 기본값 2회, `0`이면 호출당 요청을 정확히 한 번만 보내고, 1–5면 재시도를 최대 그 횟수까지만 합니다. 할당량이 아니라 상한입니다. 재시도 대상 실패만 이를 소모하며, 성공하거나 호출자 자신의 데드라인에 걸리면 더 일찍 끝납니다. 그 밖의 값(음수, 숫자가 아닌 값, 5 초과)은 조용히 보정되지 않고 시작에 실패합니다. 상한은 지연 예산입니다. 백오프는 0.5초에서 시작해 8초 상한까지 두 배씩 늘어나므로, 더 큰 예산은 호출자 자신의 타임아웃을 넘겨 재시도 가능한 실패를 타임아웃으로 바꿉니다. 재시도는 연결 실패와 HTTP 408, 409, 429, 5xx를 대상으로 하며 그 외 4xx는 그대로 반환됩니다. 서버는 시작 시 유효한 정책을 `llm retry policy`로 기록하며 해당 줄에는 자격 증명이 포함되지 않습니다.
+모든 API 복제본에 동일한 한도를 설정하세요. 기본 전역/워크스페이스 한도는 동시 실행 16/4, 분당 요청 600/60, 분당 Token 4,000,000/1,000,000입니다. JSON에서 `global_concurrent`, `workspace_concurrent`, `global_requests_per_minute`, `workspace_requests_per_minute`, `global_tokens_per_minute`, `workspace_tokens_per_minute`의 양수를 부분 지정할 수 있습니다. 각 시도 전에 입력 바이트와 출력 한도를 예약하며, 이미지는 선언한 컨텍스트 크기 이상을 예약합니다. 유효한 사용량으로 정산하고 미보고 시 추정치를 유지합니다. Token 승인 예산이며 금액 지출 한도가 아닙니다.
 
-`MULTICA_LLM_DISABLE_THINKING`은 모델이 추론(thinking) 패스를 실행해 어시스트 호출의 지연 예산을 잠식하는 gateway를 위한 설정입니다. `true`(또는 `1`)로 설정하면 서버가 모든 요청 본문에 `chat_template_kwargs: {"enable_thinking": false}`를 첨부하며, 이 필드를 전달하는 gateway(vLLM/sglang 계열 배포, 일부 GLM/Qwen 계열 LiteLLM 라우트)는 thinking 패스를 건너뜁니다. 표준 OpenAI endpoint는 알 수 없는 본문 필드를 거부하므로, 업스트림이 이를 받아들이는 경우에만 활성화하세요. GPT-5.6 계열 모델은 후속 질문 요청에서 서버가 이미 `reasoning_effort: none`을 붙입니다. 채팅 자동 제목 생성은 추론 필드를 보내지 않습니다. 이 설정이 그것에 영향을 주는 것은 구성된 업스트림이 `chat_template_kwargs`를 받아들이는 경우뿐입니다. 허용되는 값은 `true`/`false`와 `1`/`0`(대소문자 구분 없음)이며, 그 외 값은 시작에 실패합니다. 시작 로그에 재시도 정책과 함께 유효 상태가 기록됩니다.
+API 서버에 `MULTICA_LLM_DEFAULT_MODEL`과 검증한 `MULTICA_LLM_CAPABILITIES_JSON`을 명시하세요. 다음 값은 형식 예시이며 모델 한계를 추정한 값이 아닙니다.
 
-이 레이어를 사용하는 기능은 두 가지이며, 둘 다 설정한 endpoint로 채팅 내용을 전송합니다.
+```json
+{"streaming_tool_calls":true,"json_object":true,"context_tokens":32768,"max_output_tokens":4096,"max_tool_argument_bytes":65536,"max_tools":64}
+```
 
-- **대화 제목 자동 생성** — 새 채팅 세션에서 사용자가 보낸 첫 메시지를 그대로 전송합니다. 첨부 파일은 포함되지 않습니다.
-- **후속 질문**(에이전트 답변 아래의 버튼) — 대화의 마지막 부분을 전송합니다. 최대 6개 메시지이며, 대상 답변은 3000자, 그보다 오래된 메시지는 각각 800자로 제한됩니다.
+런타임 화면에서 실행 컴퓨터를 선택합니다. 각 컴퓨터는 Multica Native를 등록합니다. 에이전트는 배포 모델을 사용하며 임의의 모델 재정의와 CLI 프로필은 거부됩니다. 파일 쓰기와 셸은 기본적으로 비활성화됩니다. 필요에 따라 `MULTICA_NATIVE_ALLOW_WRITE=true`와 `MULTICA_NATIVE_ALLOW_SHELL=true`를 각각 설정하세요. 셸은 데몬 사용자의 OS 권한으로 실행됩니다. 격리가 필요하면 컨테이너, VM 또는 전용 사용자를 사용하세요.
 
-API key와 base URL이 모두 비어 있으면 이 레이어가 꺼지고 업스트림 요청을 전혀 보내지 않습니다. 위 두 기능 모두 아무것도 전송하지 않습니다. 이 레이어가 채팅 내용을 배포 환경 밖으로 보내면 안 되는 정책이라면 이것이 지원되는 구성입니다. 세션은 클라이언트가 첫 메시지에서 만든 제목을 그대로 사용하고, 후속 질문 버튼은 표시되지 않으며, 나머지 기능은 영향을 받지 않습니다.
+| 변수 | 기본값 | 설명 |
+|---|---|---|
+| `MULTICA_NATIVE_RUNTIME` | `true` | 필수 네이티브 실행입니다. 미설정 시에도 활성화되며 `false`이면 시작에 실패합니다. |
+| `MULTICA_NATIVE_ALLOW_WRITE` | `false` | 작업 디렉터리 안에서 파일 쓰기 허용 |
+| `MULTICA_NATIVE_ALLOW_SHELL` | `false` | 데몬 사용자 파일 시스템 및 네트워크 권한으로 Shell 허용 |
 
-<Callout type="info">
-이는 보조 생성 레이어에만 해당합니다. 에이전트 실행은 별도의 데이터 경로입니다. 에이전트가 채팅에 답변할 때 데몬은 해당 에이전트의 AI 코딩 도구를 그 도구 자체의 자격 증명으로 실행하며, 위의 `MULTICA_LLM_*` 설정을 도구에 전달하지 않습니다. (에이전트 자체에 필요한 실행 범위의 Multica 연결 변수는 데몬이 별도로 주입합니다.) 위 변수를 비워 두어도 이 경로에는 영향이 없으므로, 에이전트의 런타임 설정에서 관리하세요.
-</Callout>
+Multica Native는 MCP, 플러그인, 첨부 파일, 결과물, 컨텍스트 압축을 지원합니다. 결과를 알 수 없는 쓰기는 자동 재실행하지 않습니다.
+
+보조 생성은 제목용 첫 메시지와 후속 질문용 최근 최대 여섯 메시지를 보냅니다. 네이티브 실행은 시스템 지침, 대화, 도구 정의와 결과를 보냅니다. 키와 base URL을 모두 비우면 서버 모델 호출을 모두 끕니다. 보조 기능은 축소되고 네이티브 실행은 설정 누락을 보고합니다. 기존 외부 런타임은 마이그레이션 전까지 자체 자격 증명을 사용합니다.
+
+부분 응답 이후의 네이티브 스트림과 전체 실행은 자동 재시도하지 않습니다. 응답 헤더 전 전송 재시도는 `MULTICA_LLM_MAX_RETRIES`를 따릅니다. `MULTICA_LLM_DISABLE_THINKING`은 보조 생성에만 적용합니다.
 
 ## 데몬 설정
 
-아래 변수는 API 컨테이너가 아니라 에이전트를 실행하는 컴퓨터에서 읽습니다.
+Multica는 API를 통해 배포에 설정된 단일 모델을 직접 호출합니다. 실행 컴퓨터에는 Multica 데몬만 설치하면 됩니다. 외부 AI CLI 설치나 로그인은 필요하지 않습니다.
 
 | 변수 | 기본값 | 설명 |
 |---|---|---|
@@ -239,44 +247,12 @@ API key와 base URL이 모두 비어 있으면 이 레이어가 꺼지고 업스
 | `MULTICA_AGENT_TIMEOUT` | `0` | 단일 실행의 절대 시간 제한. `0`은 제한 없음 |
 | `MULTICA_AGENT_IDLE_WATCHDOG` | `2h` | 출력과 도구 실행이 모두 없을 때의 무응답 상한. `0`이면 watchdog 전체가 비활성화됩니다 |
 | `MULTICA_AGENT_TOOL_WATCHDOG` | `MULTICA_AGENT_IDLE_WATCHDOG`와 동일 | 단일 도구 호출이 계속 무응답인 시간 상한. 모델보다 도구에 더 여유를 주고 싶을 때만 따로 설정하며, `0`이면 도구 실행 중에는 강제 종료하지 않습니다. Cursor의 백그라운드 셸은 실행한 프로세스가 종료될 때까지 실행 중으로 간주됩니다. 이 상한에 도달하면 데몬이 해당 프로세스를 정리하고, Cursor가 최종 결과를 내도록 새 watchdog 예산을 부여합니다. 프로세스 소유권이나 정리를 검증할 수 없으면 일반적인 실행 취소 정책이 적용됩니다 |
-| `MULTICA_OPENCODE_IDLE_WATCHDOG` | `10m` | OpenCode 전용 무응답 기준값 |
-| `MULTICA_CODEX_SEMANTIC_INACTIVITY_TIMEOUT` | `MULTICA_AGENT_IDLE_WATCHDOG`와 동일 | Codex 의미 활동 없음 기준값. Codex 자체 타이머는 도구 실행 중인지 알 수 없으므로 별도의 짧은 상한 대신 idle / tool 예산 중 큰 값을 따릅니다 |
-| `MULTICA_CODEX_FIRST_TURN_TIMEOUT` | `0` | Codex 첫 턴 무진행 상한의 명시적 재정의; `0` 은 기본값 유지. 실제 첫 턴 대기는 여전히 `MULTICA_CODEX_SEMANTIC_INACTIVITY_TIMEOUT` 및 전체 실행 타임아웃으로 제한됨 — `MULTICA_CODEX_SEMANTIC_INACTIVITY_TIMEOUT` 을 이 값보다 엄격히 크게(여유를 두고) 설정해야 하며, 그렇지 않으면 대기가 그 값으로 잘리고 모델 카탈로그 시작 재시도가 건너뛰어짐. 값이 같으면 충분하지 않음: 의미 타이머가 먼저 시작되므로 값이 같을 때도 재시도가 손실될 수 있음 |
-| `MULTICA_CODEX_HANDSHAKE_TIMEOUT` | `30s`, `thread/start`·`thread/resume`: `60s` | Codex app-server 시작 handshake 상한. 명시적으로 설정한 값은 두 예산을 모두 일괄 재정의합니다 |
-| `MULTICA_CODEX_TURN_INTERRUPT_TIMEOUT` | `2s` | 취소 후 Codex app-server가 `turn/interrupt`를 확인하고 `turn/completed`를 보낼 때까지의 유예 시간입니다. 프로세스를 강제 정리하기 전에 최종 토큰 사용량을 보존합니다. 특히 느린 호스트에서는 daemon 로그에 기록된 인터럽트 지연을 기준으로 조정할 수 있습니다 |
 | `MULTICA_DAEMON_AUTO_UPDATE` | Cloud `true`, 자체 호스팅 `false` | CLI 자동 확인 및 업데이트 여부 |
 | `MULTICA_DAEMON_AUTO_UPDATE_INTERVAL` | `6h` | 업데이트 확인 간격 |
 | `MULTICA_DAEMON_AUTO_RELOAD` | `true` | 외부에서 교체된 `multica` 바이너리(`brew upgrade`, 재다운로드, 로컬 빌드)로 재시작할지 여부. `MULTICA_DAEMON_AUTO_UPDATE`와 독립적 |
 | `MULTICA_WORKSPACES_ROOT` | `~/multica_workspaces` | 실행용 작업 디렉터리의 루트 |
 | `MULTICA_AGENT_TEMP_BASE` | `/tmp`(Linux/macOS) | Linux/macOS 전용. 실행별 비공개 임시 디렉터리의 상위 디렉터리입니다. 기존의 쓰기 가능한 절대 경로여야 하며, 값이 잘못되면 `/tmp`로 대체하지 않고 실행 시작에 실패합니다. 짧은 경로를 선택하세요. 하위 도구가 그 아래에 AF_UNIX 소켓을 만들 수 있으며 `sun_path` 제한은 Linux에서 108바이트, macOS에서 104바이트입니다 |
 | `MULTICA_KEEP_ENV_AFTER_TASK` | `false` | 디버깅을 위해 작업 디렉터리 유지 |
-
-데몬이 에이전트 작업에 주입하는 내부 컨텍스트는 [작업 런타임 환경](/daemon-runtimes#작업-런타임-환경)을 참고하세요.
-
-각 AI 코딩 도구는 `MULTICA_<PROVIDER>_PATH`로 명령 경로를 덮어쓸 수 있으며 모델 재정의를 지원하는 도구는 `MULTICA_<PROVIDER>_MODEL`도 사용할 수 있습니다. QwenPaw와 MiniMax Code에는 모델 변수가 없고 MiniMax Code의 경로 변수는 `MULTICA_MCODE_PATH`입니다. 자세한 내용은 [AI 코딩 도구 비교](/providers#모델-출처)를 참고하세요. DeepSeek Harness는 `MULTICA_DSH_PATH`와 `MULTICA_DSH_MODEL`을 지원합니다(값은 dsh 모델 카탈로그의 모델 ID, 예: `deepseek-official/deepseek-chat`). DeepSeek Harness는 `MULTICA_DSH_PROFILE_BUNDLE`도 지원합니다. `multica` 프로필이 없을 때 설치할 번들을 지정하며, 쉼표로 구분한 여러 후보를 순서대로 시도합니다. 각 항목은 npm 패키지 이름, 디렉터리 또는 패키징된 tarball입니다. 기본값은 설정하지 않는 것입니다. Multica가 사용하는 `--stdio` 프로토콜은 이 프로필이 제공하므로, 설정하지 않으면 DSH 설치를 건드리지 않고 데몬은 사용할 수 없는 런타임을 등록하는 대신 프로필 누락을 보고합니다. Multica 자체 브리지는 아직 공개 npm 레지스트리에 없으므로 값 선택 방법은 [에이전트 런타임 설치](/install-agent-runtime)를 참고하세요. 여기에 설정한 값은 추가 확인 없이 모든 데몬 호스트의 DSH 홈에 설치되므로 공급망에 관한 결정으로 다루세요. `MULTICA_DSH_PROFILE_BUNDLE`이 활성화하는 설치는 범위를 의도적으로 제한합니다. 실행은 데몬 수명당 최대 한 번, 프로브가 프로필 부재를 확인한 경우에만 수행됩니다. 실패하면 패키지 관리자 자체의 출력을 로그에 남기고 재시도는 데몬을 재시작한 뒤에만 이루어집니다. 프로브가 시간 초과되거나 이 데몬이 다루지 않는 프로토콜 버전을 반환하면 보고만 하고 덮어쓰지 않습니다. 의도적으로 설치된 프로필을 데몬이 덮어쓰는 일은 없습니다. 진단은 데몬 로그에서 `DSH runtime profile`을 검색하세요. 되돌리려면 `$DSH_HOME/profiles/multica`(기본값 `~/.dsh/profiles/multica`)를 삭제합니다. `MULTICA_DSH_PLUGIN_PATH`는 설치 시 pnpm을 찾을 디렉터리를 덮어씁니다. `dsh plugin`이 전달하는 pnpm은 macOS와 Windows 모두 DSH Desktop 전용 runtime-commands 디렉터리에 있으며, 데몬이 이를 자동으로 찾아 PATH 앞에 추가합니다(최신 Desktop이 쓰는 버전별 구조도 포함). 따라서 이 변수는 데몬이 찾지 못하는 위치에 설치된 경우나 직접 준비한 pnpm을 쓰게 하려는 경우에만 필요합니다. 설정하면 자동 탐색을 완전히 대체하며, 지정한 디렉터리가 없으면 설치는 번들된 pnpm이 아니라 데몬 `PATH`의 pnpm으로 넘어갑니다. Linux에는 DSH Desktop이 없으므로 항상 `PATH`를 사용합니다. ZeroClaw는 `MULTICA_ZEROCLAW_PATH`를 지원하지만 모델 변수는 없습니다. 모델은 ZeroClaw의 에이전트 설정에서 관리합니다. 컴퓨터 전체 기본 인수 `MULTICA_<PROVIDER>_ARGS`는 현재 Claude Code, Codex, CodeBuddy, Qwen Code, QwenPaw 다섯 도구를 지원합니다. 해당 변수는 `MULTICA_CLAUDE_ARGS`, `MULTICA_CODEX_ARGS`, `MULTICA_CODEBUDDY_ARGS`, `MULTICA_QWEN_ARGS`, `MULTICA_QWENPAW_ARGS`입니다. 예시:
-
-```dotenv
-MULTICA_CLAUDE_PATH=/opt/bin/claude
-MULTICA_CLAUDE_ARGS=--max-turns 40
-```
-
-Cursor의 검증된 백그라운드 정리에는 Linux 6.9 이상(프로세스 그룹 pidfd), 프로세스 신원 조회와 audit token 시그널링에 대한 macOS 커널 지원, 또는 Windows에서 성공적으로 할당된 중첩 Job Object가 필요합니다. macOS에서는 커널이 검증하는 PID version으로 각 프로세스에 시그널을 보내므로 같은 세션의 그룹에 합류할 필요가 없습니다. 이 macOS API들은 비공개이며 확보 시점에 확인합니다. 소유권을 확보하지 못한 실행은 원래의 도구 결과를 반환하고, 도구 watchdog이 `0`인 경우를 포함해 일반적인 idle watchdog을 따릅니다. 이미 확보한 작업은 정리를 확인할 수 없을 때 계속 실행 중으로 남습니다. 도구 watchdog을 `0`으로 두면 이러한 경계 자체가 없습니다. 확보한 백그라운드 작업이 살아 있는 동안 실행이 계속되며, 이때 실행은 기본값이 역시 `0`인 `MULTICA_AGENT_TIMEOUT`에만 제한됩니다.
-
-확보한 Cursor 백그라운드 프로세스는 실행이 정상적으로 완료될 때도 정리됩니다. 따라서 해당 실행이 시작한 백그라운드 서버가 의도적으로 종료 처리 이후까지 살아남지는 않습니다. macOS는 보존된 원래 부모 프로세스 신원을 통해 나중에 생성된 자식 프로세스를 인식할 수 있지만, 관찰 이전에 중간 프로세스가 사라진 연결 고리는 증명할 수 없습니다. 그러한 프로세스, 추적 중인 그룹을 벗어난 작업, 그리고 지속적인 소유권 또는 시그널링 오류는 백그라운드 작업을 남길 수 있습니다. 확인되지 않은 정리는 로그로 남으며 '정리 성공'에 따른 복구 창을 부여하지 않습니다. 숫자 PID나 프로세스 그룹만을 근거로 알 수 없는 프로세스를 종료하지 않습니다.
-
-우선순위는 명령줄 flag → 환경 변수 → `~/.multica/config.json` → 내장 기본값입니다. watchdog 동작은 [데몬과 런타임](/daemon-runtimes)을 참고하세요.
-
-### 데몬 설정 영속화
-
-자주 사용하는 데몬 측 설정은 shell 환경 변수에 의존하지 않고 `~/.multica/config.json`에 기록할 수도 있습니다. 이름 있는 profile의 설정 파일은 `~/.multica/profiles/<name>/config.json`에 있습니다.
-
-```bash
-multica config set poll_interval 10s
-multica config show
-```
-
-지원되는 key:
-
 | key | 기본값 | 설명 |
 |---|---|---|
 | `server_url` | `ws://localhost:8080/ws` | Multica API / WebSocket 주소 |
@@ -290,18 +266,11 @@ multica config show
 | `ws_claim_poll_interval` | `3m` | 정상 WebSocket에서 claim 안전 polling의 상한. `poll_interval`과 독립적으로 설정되며 Daemon은 하향 jitter를 적용합니다 |
 | `heartbeat_interval` | `15s` | heartbeat 간격 |
 | `agent_timeout` | 제한 없음 | 단일 실행의 절대 시간 제한 |
-| `codex_semantic_inactivity_timeout` | 파생 | Codex 의미 활동 없음 기준값. 설정하지 않으면 idle과 tool watchdog 예산 중 큰 값을 따르고, tool 예산이 `0`이면 idle 예산으로 되돌아갑니다. Codex 자체의 `10m`은 watchdog 전체를 비활성화했을 때만 유지됩니다 |
-| `codex_handshake_timeout` | `30s`, `thread/start`·`thread/resume`: `60s` | Codex app-server 시작 handshake 상한. 명시적으로 설정한 값은 두 예산을 모두 일괄 재정의합니다 |
 | `disable_auto_update` | 환경을 따름 | `true`는 자동 업데이트를 끔. `false`는 로컬 덮어쓰기를 지우고 환경 변수 또는 기본값으로 복귀 |
 | `auto_update_check_interval` | `6h` | 업데이트 확인 간격 |
 | `disable_auto_reload` | 환경을 따름 | `true`는 디스크에서 교체된 바이너리 추적을 끔. `false`는 로컬 덮어쓰기를 지움. `disable_auto_update`와 별도로 해석됨 |
 
-값에는 다음 규칙이 적용됩니다.
-
-- duration key는 양의 Go duration(예: `10s`, `2h`)을 허용하며 `0s`와 음수는 거부합니다. 유일한 예외는 `agent_timeout`입니다. `0s`가 유효하며 실행 시간 제한을 명시적으로 끕니다.
-- 빈 문자열을 전달하면 저장된 값을 지우고 환경 변수 또는 내장 기본값으로 돌아갑니다. 예: `multica config set poll_interval ""`
-- `max_concurrent_tasks`는 0 이상의 정수여야 합니다.
-- 상대 `workspaces_root` 값은 저장할 때 절대 경로로 변환됩니다.
+파일 쓰기와 셸은 기본적으로 비활성화됩니다. 필요에 따라 `MULTICA_NATIVE_ALLOW_WRITE=true`와 `MULTICA_NATIVE_ALLOW_SHELL=true`를 각각 설정하세요. 셸은 데몬 사용자의 OS 권한으로 실행됩니다. 격리가 필요하면 컨테이너, VM 또는 전용 사용자를 사용하세요.
 
 ## 관측과 통계
 

@@ -28,9 +28,11 @@ These have sensible defaults and only need to be set when tuning a large or cons
 
 Budget the sum of primary and replica pool limits across every API pod against the PostgreSQL cluster connection ceiling. The replica pool defaults to a five-minute connection lifetime (overridable with the `pool_max_conn_lifetime` URL parameter) so read-only validation is refreshed after promotion. Replica configuration is non-critical: invalid configuration or runtime connection failure makes explicitly opted-in reads fall back to primary, with a short passive circuit preventing every request from paying the connection timeout. Existing read paths remain primary-only until migrated individually. Replica reads have no application-enforced staleness bound; monitor replication lag in the database layer and keep consistency-sensitive reads on primary.
 
-### Email (Required for Authentication)
+### Email (Optional Notifications)
 
-Multica supports two email backends. `SMTP_HOST` takes priority when set; otherwise `RESEND_API_KEY` is used. With neither configured, verification codes are printed to the server log — copy them from there to log in.
+Username/password authentication does not require email delivery. Optional contact emails are unverified and do not grant email invitations.
+
+Multica supports two email backends. `SMTP_HOST` takes priority when set; otherwise `RESEND_API_KEY` is used. With neither configured, invitation notifications are written to server logs; username/password login still works.
 
 #### Option A: Resend (recommended for cloud deployments)
 
@@ -55,7 +57,7 @@ Use this option when your deployment cannot reach the public internet or you alr
 
 STARTTLS is used automatically when advertised by the server. Port 465 (SMTPS / implicit TLS) is supported and auto-enables implicit TLS; set `SMTP_TLS=implicit` (aliases `smtps`, `ssl`) to force it on a non-standard port.
 
-> **Note:** If neither Resend nor SMTP is configured, generated verification codes are printed to backend logs — copy them from there to log in. A fixed local testing code (e.g. `888888`) is **opt-in only**: set `MULTICA_DEV_VERIFICATION_CODE=888888` in `.env` and keep `APP_ENV` non-production. The Docker self-host stack pins `APP_ENV=production`, so the shortcut is ignored there. **Never enable a fixed code on a publicly reachable instance.**
+> **Note:** Email-code login and the fixed development code have been retired. See [account setup](apps/docs/content/docs/auth-setup.mdx) to initialize usernames and passwords for existing users.
 
 ### Google OAuth (Optional)
 

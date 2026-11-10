@@ -6,12 +6,12 @@ description: 컴퓨터를 연결하고 첫 에이전트를 만든 뒤 첫 작업
 import { Callout } from "fumadocs-ui/components/callout";
 
 <Callout type="info">
-에이전트를 실행하기 전에 해당 컴퓨터에 Claude Code, Codex, Cursor 같은 [지원되는 AI 코딩 도구](/providers)가 하나 이상 설치되어 있고 로그인되어 있어야 합니다. Multica에는 이 도구들이 포함되어 있지 않습니다.
+실행 컴퓨터에는 Multica를 설치합니다. 배포 관리자가 단일 LLM API와 모델을 설정하고 Multica Native가 실행합니다. 외부 AI CLI 설치나 로그인은 필요하지 않습니다.
 </Callout>
 
 ## 1. 로그인하고 워크스페이스 열기
 
-Web([multica.ai](https://multica.ai)) 또는 [Multica Desktop](https://multica.ai/download)에서 로그인합니다. 이메일 인증 코드와 Google 로그인을 지원합니다.
+독립 사용자 이름과 비밀번호로 가입합니다. 이메일은 선택 사항이며 인증 메일을 보내지 않습니다. 가입 후 바로 로그인됩니다.
 
 - **Desktop**: 현재 컴퓨터를 자동으로 연결할 수 있습니다.
 - **Web**: 다음 단계에서 명령줄을 통해 연결해야 합니다.
@@ -20,7 +20,7 @@ Web([multica.ai](https://multica.ai)) 또는 [Multica Desktop](https://multica.a
 
 에이전트는 연결된 컴퓨터에서 작업을 실행합니다. 사이드바 아래쪽의 **설정 → 런타임**을 엽니다.
 
-- **Desktop 사용**: Desktop이 이 컴퓨터를 런타임으로 자동 등록하고 설치된 AI 코딩 도구를 감지합니다. 도구를 방금 설치했다면 "새로고침"을 클릭해 다시 감지하세요.
+- **Desktop 사용**: 로그인하면 Multica daemon이 시작되고 이 컴퓨터를 Multica Native 런타임으로 등록합니다.
 - **Web을 사용하거나 다른 컴퓨터를 추가해야 하는 경우**: 오른쪽 위의 **컴퓨터 추가**를 클릭하고 대상 컴퓨터의 터미널에서 팝업에 표시된 두 명령을 실행합니다.
 
   **macOS / Linux**
@@ -51,7 +51,7 @@ Web([multica.ai](https://multica.ai)) 또는 [Multica Desktop](https://multica.a
 
 사이드바에서 **워크스페이스 → 에이전트**를 열고 **새 에이전트**를 클릭한 뒤 방법을 선택합니다.
 
-- **빈 상태로 시작**: 필드를 직접 입력합니다. 최소한 이름만 입력하고 런타임과 AI 코딩 도구를 확인하면 만들 수 있습니다.
+- 실행 컴퓨터와 고정 모델을 확인한 뒤 만듭니다.
 - **AI로 만들기**: 원하는 내용을 설명하면 Agent Builder가 질문하고 설정을 생성합니다. 이 방법에는 온라인 런타임이 필요합니다.
 
 나머지 설정은 나중에 보완할 수 있습니다. [에이전트 생성 및 설정](/agents-create)을 참고하세요.
@@ -82,7 +82,7 @@ Web([multica.ai](https://multica.ai)) 또는 [Multica Desktop](https://multica.a
 
 | 증상 | 먼저 확인할 사항 |
 |---|---|
-| 런타임을 찾지 못함 | AI 코딩 도구가 설치되어 있고 터미널에서 실행되는지 확인합니다. Desktop에서는 "새로고침"을 클릭하고 CLI 방식에서는 `multica setup`을 다시 실행합니다. |
+| 런타임을 찾지 못함 | Desktop을 열어 두거나 `multica daemon status`, `multica daemon start`를 실행하고 서비스 연결과 모델 설정을 확인합니다. |
 | 런타임이 오프라인으로 표시됨 | Desktop을 계속 열어 둡니다. CLI 방식에서는 `multica daemon status`를 실행하고 시작되지 않았다면 `multica daemon start`를 실행합니다. |
 | 태스크가 계속 큐에서 대기함 | 에이전트가 사용하는 런타임이 온라인인지 확인합니다. 런타임이 동시 실행 상한에 도달하면 새 실행은 계속 대기합니다. |
 

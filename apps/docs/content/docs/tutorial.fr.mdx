@@ -15,7 +15,7 @@ Le projet d'exemple est un site web personnel, qui sert à parcourir de bout en 
 **Avant de commencer :**
 
 - Un compte Multica (inscrivez-vous sur [multica.ai](https://multica.ai))
-- Un ordinateur disposant d'au moins un outil de codage IA installé et connecté, par exemple Claude Code ou Codex. La liste complète des outils pris en charge figure dans [Installer des outils de codage IA](/install-agent-runtime).
+- Un ordinateur exécutant Multica Desktop ou le daemon Multica, et un déploiement configuré avec une seule [API de modèle](/install-agent-runtime).
 
 ## Créer un espace de travail
 
@@ -38,15 +38,15 @@ La création ouvre le nouvel espace de travail. La barre latérale à gauche est
 
 ## Connecter votre ordinateur
 
-Les agents exécutent le travail sur les ordinateurs que vous connectez, à l'aide des outils de codage IA installés sur ces ordinateurs.
+Les agents exécutent les outils sur les ordinateurs connectés. Multica appelle directement l’API du modèle du déploiement, commun à tous les agents.
 
-Ce tutoriel utilise [Multica Desktop](https://multica.ai/download) : après le téléchargement et la connexion, l'application enregistre automatiquement cet ordinateur comme runtime et détecte les outils de codage IA installés. Ouvrez **Équipe IA → Runtimes** en bas de la barre latérale et vérifiez que l'ordinateur est en ligne :
+Téléchargez [Multica Desktop](https://multica.ai/download) et connectez-vous. L’application enregistre le runtime intégré Multica Native. Ouvrez **Configuration → Runtimes** et vérifiez que l’ordinateur est en ligne.
 
 ![La liste des runtimes avec cet ordinateur en ligne](/images/docs/tutorial-runtimes-list.webp)
 
-Ouvrez l'ordinateur pour voir chaque outil détecté :
+Ouvrez l’ordinateur pour consulter le runtime intégré, le modèle fixe et la connexion. Les captures ci-dessous peuvent montrer l’ancienne interface.
 
-![Détail du runtime : les outils de codage IA détectés](/images/docs/tutorial-runtime-detail.webp)
+![Détails du runtime](/images/docs/tutorial-runtime-detail.webp)
 
 Desktop n'est pas obligatoire : sur la page Runtimes, cliquez sur **Ajouter un ordinateur** et suivez les instructions pour procéder à l'installation en ligne de commande. Le daemon tourne alors en arrière-plan — voir [Daemon et runtimes](/daemon-runtimes).
 
@@ -57,7 +57,7 @@ Les agents sont des membres à part entière d'un espace de travail : on peut le
 Ouvrez **Agents** dans la barre latérale, cliquez sur **Nouvel agent**, choisissez **Partir de zéro** et remplissez trois champs :
 
 - **Nom** : `Multica helper`.
-- **Runtime** et **Modèle** : choisissez l'ordinateur connecté à l'étape précédente et l'un de ses outils de codage IA, puis un modèle pris en charge par cet outil. Ce tutoriel utilise Claude et Sonnet.
+- **Runtime** et **Modèle** : choisissez Multica Native sur l’ordinateur connecté. Le déploiement définit le modèle affiché ; les agents ne peuvent pas en choisir un autre.
 - **Instructions** : le prompt fourni à l'agent à chaque exécution. Indiquez ce dont il est responsable et ce dont il ne l'est pas :
 
 ```text
@@ -82,11 +82,11 @@ Laissez les autres champs à leurs valeurs par défaut et créez l'agent. De ret
 
 Construire le site nécessite un ingénieur capable d'écrire du code. Cette fois, pas de formulaire à remplir — l'espace de travail a déjà un agent, on peut donc lui confier la création du suivant.
 
-Ouvrez **Discussion** dans la barre latérale, sélectionnez Multica helper et demandez-lui de créer un agent nommé Engineer sur le même runtime, avec Opus comme modèle, chargé de construire et de maintenir le site web personnel. Multica helper effectue la création sur cet ordinateur et répond avec le nom et le modèle du nouvel agent. Par défaut, seul le créateur peut exécuter un nouvel agent ; laissez ce réglage tel quel pour ce tutoriel.
+Ouvrez **Discussion**, sélectionnez Multica helper et demandez-lui de créer Engineer sur le même runtime intégré pour construire et maintenir le site personnel. Engineer utilise le modèle du déploiement. Gardez les permissions par défaut.
 
 ![Demander au helper, dans la discussion, de créer Engineer](/images/docs/tutorial-chat-create-engineer.webp)
 
-Ouvrez **Agents → Engineer** pour vérifier le résultat : le modèle est Opus, et les instructions ont été générées par Multica helper — périmètre de responsabilité, façon de récupérer le code du dépôt et exigences pour soumettre des modifications. Elles sont modifiables à tout moment.
+Ouvrez **Agents → Engineer** pour vérifier le modèle fixe et les instructions générées : responsabilités, accès au dépôt et soumission des modifications. Ajustez les instructions si nécessaire.
 
 ![Les instructions d'Engineer](/images/docs/tutorial-engineer-instructions.webp)
 
@@ -153,7 +153,7 @@ L'exécution prend quelques minutes, et deux points d'entrée permettent de suiv
 
 ![Les deux points d'entrée pour suivre l'avancement](/images/docs/tutorial-issue-engineer-working.webp)
 
-Le journal d'exécution contient chaque étape de l'exécution : les lignes **Agent** sont son propre récit, et **Bash**, **Read** et **Edit** correspondent aux commandes qu'il a lancées et aux fichiers qu'il a lus et écrits. Au moment de cette capture, il prend des captures d'écran des pages terminées pour vérifier son propre travail, et vient de constater que le séparateur du tableau de tarifs est mal aligné. Cliquez sur le ⓘ en haut à droite pour voir l'ordinateur, l'outil de codage IA et le répertoire de travail utilisés pour l'exécution.
+Consultez le journal pour lire les messages du modèle et les résultats des outils. Les détails indiquent l’ordinateur et le répertoire de travail. Les outils disponibles dépendent des permissions et intégrations ; leurs noms peuvent différer des anciennes captures.
 
 ![Journal d'exécution : chaque étape suivie par Engineer](/images/docs/tutorial-execution-log.webp)
 
@@ -189,7 +189,7 @@ De retour sur la tâche, une carte de PR apparaît désormais dans la zone **Pul
 
 Cette relecture a mis en évidence deux habitudes de travail d'Engineer : il vérifie son travail par des captures d'écran répétées une fois terminé, ce qui consomme beaucoup de temps d'exécution ; et il ouvre des PR sans l'identifiant de la tâche, qui ne sont donc pas liées. Aucune des deux n'est une erreur ponctuelle — il les reproduit à chaque fois. Ce qu'il faut changer, ce n'est pas cette tâche, mais ses instructions.
 
-Inutile de modifier les instructions à la main : un agent peut mettre à jour sa propre configuration avec le CLI multica. Dans la même conversation, donnez à Engineer les deux règles — pas d'autovérification par captures d'écran une fois le travail terminé, puisque la relecture se fait dans un navigateur ; et le nom de branche ou le titre d'une PR doit contenir l'identifiant de la tâche — et demandez-lui de les inscrire dans ses propres instructions :
+Demandez à Engineer de mettre à jour ses instructions avec les outils métier intégrés : vérifier le résultat dans le navigateur et inclure l’identifiant de tâche dans la branche ou le titre de la PR.
 
 ![Demander à Engineer d'inscrire les règles dans ses propres instructions](/images/docs/tutorial-chat-update-instructions.webp)
 
@@ -205,7 +205,7 @@ Dès lors, les deux règles s'appliquent avec les instructions à chaque exécut
 
 Engineer a livré une première version, mais certains problèmes lui échappent. La relecture est confiée à un nouvel agent : un contexte neuf, dédié à la vérification de la qualité du code au regard des exigences de la tâche.
 
-La création est de nouveau confiée à Multica helper : un agent nommé Reviewer, cette fois sur Codex avec le modèle GPT-5.6 Sol — un outil et un modèle différents de ceux d'Engineer ; il ne fait que relire, ne modifie jamais le code et rédige ses conclusions sous forme de commentaires sur la tâche. Les instructions sont là encore générées par le helper — lire l'état réel de la PR avant de relire, rédiger les constats en commentaires avec l'emplacement des fichiers, et ne jamais modifier le code :
+Demandez à Multica helper de créer Reviewer sur le même runtime intégré et modèle du déploiement. Ses instructions imposent de lire l’état réel de la PR, de citer les emplacements des fichiers et de relire sans modifier le code.
 
 ![La configuration de Reviewer](/images/docs/tutorial-reviewer-detail.webp)
 
@@ -250,7 +250,7 @@ Un squad, c'est la répartition des rôles que vous avez déjà, plus un chef :
 
 Les membres ne se limitent pas aux agents. Chaque membre porte une description de rôle d'une ligne, que le chef consulte lorsqu'il délègue.
 
-Il suffit de décrire cette organisation à Multica helper : créer le squad et son chef, attribuer à chaque membre son rôle, rattacher un skill à Lead et un autre à Engineer (voir la section suivante), et inscrire le flux de travail dans les instructions du squad — le développement revient à Engineer, la livraison attend que la PR ait passé la relecture, et Engineer fusionne après votre validation. Le helper applique toute la configuration en une seule passe avec le CLI :
+Demandez à Multica helper de créer le squad et son chef avec les outils métier intégrés, de définir les rôles et skills, puis le flux : Engineer développe, Reviewer relit et la fusion attend votre accord explicite.
 
 ![Le helper configure tout le squad en une seule passe](/images/docs/tutorial-helper-create-squad.webp)
 
@@ -279,7 +279,7 @@ La façon de travailler d'une équipe se cristallise dans des skills, et un nouv
 
 ![Les quatre façons d'ajouter un nouveau skill](/images/docs/tutorial-skill-new-modal.webp)
 
-Lisez les fichiers d'un skill tiers avant de l'importer : Multica ne les isole pas dans un bac à sable, et le contenu d'un skill est transmis tel quel à l'outil de codage IA.
+Lisez les fichiers des skills tiers avant de les importer. Leurs instructions entrent dans le contexte du modèle ; les opérations restent soumises aux permissions des outils. Un skill ne fournit pas de bac à sable système.
 
 ## La deuxième tâche : la confier au squad
 

@@ -13,7 +13,7 @@ Multica Desktop is available for macOS, Windows, and Linux. It uses the same acc
 | --- | --- | --- |
 | How you open it | Browser | Install the desktop app |
 | Workspace tabs | Uses browser tabs | Each workspace keeps its own set of tabs |
-| Daemon | Install and start the CLI separately | Started by the app automatically after sign-in |
+| Daemon | Install and start the Multica daemon separately | Started by the app automatically after sign-in |
 | Updates | Refresh the page | Updated through the desktop app |
 
 Web is more convenient for a quick look or on a shared computer.
@@ -30,10 +30,10 @@ Pick the installer that matches your OS and CPU architecture from the [Multica d
 | Windows | `.exe` |
 | Linux | `.AppImage`, `.deb`, or `.rpm` |
 
-After installing, sign in with the same email you use on the web. Once signed in, Desktop starts its own bundled Multica CLI and detects the AI coding tools already installed on the machine.
+After installing, sign in with the same email you use on the web. Once signed in, Desktop starts its managed Multica daemon, which registers this computer as a native runtime.
 
 <Callout type="info">
-The CLI bundled with Desktop only serves the app's managed runtime. If you also want to run commands like `multica issue` in a terminal, install the CLI separately following [step 2 of the quickstart](/cloud-quickstart#2-connect-a-computer).
+The app manages its own daemon profile. To run commands like `multica issue` in a terminal, install the Multica command-line client separately.
 </Callout>
 
 ## Desktop tabs
@@ -46,7 +46,7 @@ Logging out clears every tab saved on the machine, so the next person to sign in
 
 ## Built-in daemon
 
-After sign-in, Desktop creates a dedicated CLI profile for the current Multica service and uses it to start the daemon. The profile lives at:
+After sign-in, Desktop creates a dedicated profile for the current Multica service and uses it to start the daemon. The profile lives at:
 
 ```text
 ~/.multica/profiles/desktop-<host>/
@@ -54,7 +54,7 @@ After sign-in, Desktop creates a dedicated CLI profile for the current Multica s
 
 It never reads or overwrites the default profile you use in the terminal. If you also start another daemon manually, Multica shows them as separate runtimes.
 
-You can check runtime status and logs in Desktop's settings. If a tool isn't detected, first confirm it runs in a regular terminal and is logged in, then restart Desktop's daemon.
+You can check runtime status and logs in Desktop's settings. If the runtime is offline, restart Desktop's daemon and verify the execution computer can reach the Multica API.
 
 ## Updating Desktop
 

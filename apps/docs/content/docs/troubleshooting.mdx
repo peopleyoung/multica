@@ -163,24 +163,9 @@ GODEBUG=tlsmlkem=0 multica --debug login
 
 If that succeeds, set `GODEBUG=tlsmlkem=0` permanently for the user that runs the CLI and the daemon — on Windows, run `[Environment]::SetEnvironmentVariable('GODEBUG', 'tlsmlkem=0', 'User')` and open a new terminal — then restart the daemon or the desktop app. Raising `MULTICA_HTTP_TIMEOUT` does not help: it does not govern the handshake. The permanent fix is on the network side: update or reconfigure the device or software that drops split TLS handshakes.
 
-## Verification code and invitation emails not delivered
+## Invitation notification emails not delivered
 
-Check the backend startup log first. It states whether the server is using `SMTP relay`, `Resend API`, or `DEV mode`:
-
-```bash
-docker compose -f docker-compose.selfhost.yml logs backend \
-  | grep "EmailService:"
-```
-
-- **DEV mode**: no email is sent; verification codes and invitation links are only written to the backend log.
-- **Resend**: confirm the API key is valid and the sender address's domain is verified.
-- **SMTP**: confirm the host, port, credentials, and sender address, and use the error log to tell whether the failure happened at the connection, TLS, authentication, or delivery stage.
-
-When `SMTP_HOST` and Resend are both configured, Multica prefers SMTP. For configuration, see [Sign-in and signup](/auth-setup#email-verification-codes).
-
-<Callout type="warning">
-Do not rely on codes in the log in production, and do not enable the fixed local test code.
-</Callout>
+Username/password sign-in does not send verification email. Email delivery is optional for notifications and invitations. Check `SMTP_HOST`, `SMTP_PORT`, sender settings or `RESEND_API_KEY`; SMTP takes priority when both providers are configured. Without either provider, invitation links are written to backend logs. See [Environment variables](/environment-variables).
 
 ## Attachment uploads or downloads fail
 

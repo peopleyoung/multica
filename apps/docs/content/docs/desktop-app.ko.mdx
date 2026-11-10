@@ -30,7 +30,7 @@ Multica Desktop은 macOS, Windows, Linux에서 사용할 수 있습니다. Web �
 | Windows | `.exe` |
 | Linux | `.AppImage`, `.deb`, `.rpm` |
 
-설치 후 Web 버전과 같은 이메일로 로그인합니다. 로그인하면 Desktop이 내장 Multica CLI를 시작하고 로컬에 설치된 AI 코딩 도구를 감지합니다.
+Web과 같은 이메일로 로그인합니다. Desktop이 내장 Multica daemon을 시작하고 Multica Native 런타임을 등록합니다.
 
 <Callout type="info">
 Desktop 내장 CLI는 앱이 런타임을 관리할 때만 사용합니다. 터미널에서 `multica issue` 같은 명령도 실행하려면 [빠른 시작 2단계](/cloud-quickstart#2-컴퓨터-연결)에 따라 CLI를 별도로 설치하세요.
@@ -54,7 +54,7 @@ Desktop은 워크스페이스마다 탭을 따로 저장합니다. 예를 들어
 
 터미널에서 사용하는 기본 profile을 읽거나 덮어쓰지 않습니다. 다른 데몬을 직접 동시에 시작하면 Multica에는 각각 별도 런타임으로 표시됩니다.
 
-Desktop 설정에서 실행 상태와 로그를 확인할 수 있습니다. 도구가 감지되지 않으면 먼저 일반 터미널에서 실행되고 로그인되어 있는지 확인한 뒤 Desktop 데몬을 다시 시작하세요.
+Desktop 설정에서 상태와 로그를 확인합니다. 오프라인이면 서비스 연결을 확인하고 daemon을 다시 시작합니다. 모델 설정은 배포 관리자가 담당합니다.
 
 ## Desktop 업데이트
 

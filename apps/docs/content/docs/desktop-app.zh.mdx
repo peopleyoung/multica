@@ -30,7 +30,7 @@ Multica Desktop 提供 macOS、Windows 和 Linux 版本。它和 Web 版使用�
 | Windows | `.exe` |
 | Linux | `.AppImage`、`.deb` 或 `.rpm` |
 
-安装后使用和 Web 版相同的邮箱登录。登录后，Desktop 会启动自己内置的 Multica CLI，并检测本机已有的 AI 编程工具。
+安装后使用和 Web 版相同的邮箱登录。Desktop 会启动内置的 Multica daemon，并注册 Multica Native 运行时。
 
 <Callout type="info">
 Desktop 内置的 CLI 只供应用管理运行时使用。如果你还要在终端中运行 `multica issue` 等命令，按[快速上手第 2 步](/cloud-quickstart#2-连接一台电脑)单独安装 CLI。
@@ -54,7 +54,7 @@ Desktop 会为每个工作区单独保存标签页。例如，你在工作区 A 
 
 它不会读取或覆盖你在终端中使用的默认 profile。如果你同时手动启动了另一个守护进程，Multica 会把它们显示为不同的运行时。
 
-可以在 Desktop 的设置中查看运行状态和日志。工具没有被检测到时，先确认它能在普通终端中运行并且已经登录，再重启 Desktop 的守护进程。
+可在 Desktop 设置查看运行状态和日志。运行时离线时检查服务连接，并重启 Desktop daemon；模型配置由部署方管理。
 
 ## 更新 Desktop
 

@@ -433,8 +433,8 @@ its own database and CLI profile, is one command:
 make up C=api,web,daemon
 ```
 
-It creates the environment if needed, sets the fixed local verification code
-before the first launch, logs in as `dev@localhost`, mints a personal access
+It creates the environment if needed, provisions the local `multica_dev` account
+with a random password in the CLI profile’s `login-password` file, mints a personal access
 token, creates a workspace, writes the CLI profile, builds `server/bin/multica`
 and starts the daemon from that binary. It then prints the URL, the login, the
 commit, and the stop command.
@@ -465,7 +465,7 @@ second path-derived identity. `make destroy` removes the marked env file and
 this environment's Electron userData. Direct `pnpm dev:desktop` still uses its
 path-derived fallback when it is run outside `make up`.
 
-Log in with `dev@localhost` and `888888`.
+Log in as `multica_dev` using the password file printed by `make up`. Email verification is not used.
 
 ### Isolation Guarantee
 

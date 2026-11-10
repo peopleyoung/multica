@@ -163,24 +163,9 @@ GODEBUG=tlsmlkem=0 multica --debug login
 
 이렇게 해서 성공하면 CLI와 데몬을 실행하는 사용자에게 `GODEBUG=tlsmlkem=0`을 영구적으로 설정하고(Windows에서는 `[Environment]::SetEnvironmentVariable('GODEBUG', 'tlsmlkem=0', 'User')`를 실행한 뒤 새 터미널을 여세요) 데몬 또는 데스크톱 앱을 다시 시작하세요. `MULTICA_HTTP_TIMEOUT`을 늘려도 도움이 되지 않습니다. 핸드셰이크는 이 설정의 영향을 받지 않습니다. 근본적인 해결은 네트워크 쪽에서 해야 합니다. 분할된 TLS 핸드셰이크를 버리는 장비나 소프트웨어를 업데이트하거나 재구성하세요.
 
-## 인증 코드 및 초대 이메일이 도착하지 않음
+## 초대 알림 이메일이 도착하지 않음
 
-먼저 backend 시작 로그를 확인합니다. 로그에는 현재 `SMTP relay`, `Resend API`, `DEV mode` 중 무엇을 사용하는지 표시됩니다.
-
-```bash
-docker compose -f docker-compose.selfhost.yml logs backend \
-  | grep "EmailService:"
-```
-
-- **DEV mode**: 이메일을 보내지 않고 인증 코드와 초대 링크를 backend 로그에만 기록합니다.
-- **Resend**: API key가 유효하고 발신 주소의 도메인이 인증되었는지 확인합니다.
-- **SMTP**: host, port, 자격 증명, 발신 주소를 확인하고 오류 로그에서 연결, TLS, 인증, 전달 중 어느 단계에서 실패했는지 판단합니다.
-
-`SMTP_HOST`와 Resend를 함께 설정하면 Multica가 SMTP를 우선 사용합니다. 설정 방법은 [로그인과 가입](/auth-setup#이메일-인증-코드)을 참고하세요.
-
-<Callout type="warning">
-프로덕션 환경에서는 로그의 인증 코드에 의존하거나 고정된 로컬 테스트 인증 코드를 활성화하지 마세요.
-</Callout>
+사용자 이름과 비밀번호 로그인은 인증 이메일을 보내지 않습니다. 이메일 전송은 알림과 초대를 위한 선택 사항입니다. `SMTP_HOST`, `SMTP_PORT`, 발신 주소 또는 `RESEND_API_KEY`를 확인하세요. 둘 다 설정하면 SMTP를 우선합니다. 설정하지 않으면 초대 링크를 백엔드 로그에 기록합니다. [환경 변수](/environment-variables)를 참고하세요.
 
 ## 첨부 파일 업로드 또는 다운로드 실패
 

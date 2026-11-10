@@ -33,7 +33,16 @@ docker compose version
 
 Multica uses Compose v2, invoked as `docker compose`. The legacy `docker-compose` v1 is not supported.
 
-The computer also needs at least one [AI coding tool](/providers) installed and logged in, such as Claude Code, Codex, or Cursor. The Multica CLI is installed in step 5.
+Install Multica on the execution computer. The API administrator configures one LLM endpoint and model; external AI CLIs and their accounts are not required.
+
+Install Multica on the execution computer. The API administrator configures one LLM endpoint and model; external AI CLIs and their accounts are not required.
+```dotenv
+MULTICA_LLM_API_KEY=
+MULTICA_LLM_BASE_URL=
+MULTICA_LLM_DEFAULT_MODEL=
+```
+
+[LLM API](/environment-variables): `MULTICA_LLM_CAPABILITIES_JSON`, `MULTICA_LLM_LIMITS_JSON`.
 
 ## 1. Start Multica
 
@@ -189,26 +198,9 @@ The last command prints `daemon_server_url`, the URL daemons use to reach the AP
 
 ## 4. Log in and create a workspace
 
-Open `http://localhost:3000` locally, or the `https://app.example.com` you just configured, and enter your email to request a verification code.
+Register with a unique username and password. Email is optional and no verification email is sent. After registration, you are signed in immediately.
 
-No email service is configured by default. After requesting a code, read it from the backend logs:
-
-```bash
-docker compose -f docker-compose.selfhost.yml logs backend \
-  | grep "Verification code"
-```
-
-The logs contain a line like:
-
-```text
-[DEV] Verification code for you@example.com: 123456
-```
-
-Enter the code and create your first workspace. Once Resend or SMTP is configured, codes are sent by email and members no longer need to read container logs — see [Auth setup](/auth-setup).
-
-<Callout type="warning">
-Self-hosted deployments default to `APP_ENV=production`, which disables fixed verification codes. Do not set `MULTICA_DEV_VERIFICATION_CODE` on a public instance.
-</Callout>
+[Account setup](/auth-setup)
 
 ## 5. Connect a computer
 
@@ -257,7 +249,7 @@ multica daemon status
 The output should show:
 
 - `Daemon: running`
-- `Agents` listing the AI coding tools installed on this machine
+- `Agents` listing Multica Native on this computer
 - `Workspaces` greater than `0`
 
 ## 6. Complete the first run
@@ -378,7 +370,6 @@ Helm has its own upgrade path: set `images.backend.tag` / `images.frontend.tag` 
 | Symptom | Check first |
 |---|---|
 | `/readyz` does not return `ok` | Run `docker compose -f docker-compose.selfhost.yml logs backend postgres`. |
-| No verification code arrives | Request a code, then search the backend logs for `Verification code`. |
 | `setup self-host` reports the server is unreachable | From the computer, request `https://api.example.com/health` to confirm DNS, TLS, and the reverse proxy are all reachable. A 404 means the proxy sends `/health` to an older web release that does not forward it — route it to the backend ([Troubleshooting](/troubleshooting#multica-setup-reports-the-server-is-not-reachable)). |
 | The daemon lists no `Agents` | Confirm the AI coding tools are on `PATH` and logged in, then run `multica daemon restart`. |
 | Issues stay queued | Run `multica daemon status` to confirm the daemon is running and connected to the workspace. |

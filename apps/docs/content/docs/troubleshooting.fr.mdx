@@ -163,24 +163,9 @@ GODEBUG=tlsmlkem=0 multica --debug login
 
 Si cela fonctionne, définissez `GODEBUG=tlsmlkem=0` de façon permanente pour l'utilisateur qui exécute le CLI et le daemon — sous Windows, exécutez `[Environment]::SetEnvironmentVariable('GODEBUG', 'tlsmlkem=0', 'User')` et ouvrez un nouveau terminal —, puis redémarrez le daemon ou l'application de bureau. Augmenter `MULTICA_HTTP_TIMEOUT` n'aide pas : cette variable ne régit pas la poignée de main. La correction durable se fait côté réseau : mettez à jour ou reconfigurez l'appareil ou le logiciel qui abandonne les poignées de main TLS fragmentées.
 
-## Les e-mails de code de vérification et d'invitation ne sont pas reçus
+## Les e-mails de notification d'invitation ne sont pas reçus
 
-Consultez d'abord le journal de démarrage du backend. Il indique si le serveur utilise `SMTP relay`, `Resend API` ou `DEV mode` :
-
-```bash
-docker compose -f docker-compose.selfhost.yml logs backend \
-  | grep "EmailService:"
-```
-
-- **DEV mode** : aucun e-mail n'est envoyé ; les codes de vérification et les liens d'invitation sont uniquement écrits dans le journal du backend.
-- **Resend** : vérifiez que la clé d'API est valide et que le domaine de l'adresse de l'expéditeur est vérifié.
-- **SMTP** : vérifiez l'hôte, le port, les identifiants et l'adresse de l'expéditeur, et utilisez le journal d'erreurs pour déterminer si l'échec est survenu à l'étape de la connexion, de TLS, de l'authentification ou de la remise.
-
-Lorsque `SMTP_HOST` et Resend sont tous deux configurés, Multica privilégie SMTP. Pour la configuration, consultez [Connexion et inscription](/auth-setup#codes-de-vérification-par-e-mail).
-
-<Callout type="warning">
-En production, ne vous fiez pas aux codes écrits dans le journal et n'activez pas le code de test local fixe.
-</Callout>
+La connexion par identifiant et mot de passe n'envoie aucun e-mail de vérification. L'envoi d'e-mails est facultatif pour les notifications et invitations. Vérifiez `SMTP_HOST`, `SMTP_PORT`, l'expéditeur ou `RESEND_API_KEY`. SMTP est prioritaire si les deux sont configurés. Sans fournisseur, les liens d'invitation sont écrits dans les journaux backend. Voir [Variables d'environnement](/environment-variables).
 
 ## L'envoi ou le téléchargement de pièces jointes échoue
 

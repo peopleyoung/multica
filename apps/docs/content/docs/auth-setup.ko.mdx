@@ -1,163 +1,36 @@
 ---
-title: 로그인과 가입
-description: 이메일 인증 코드, Google 로그인, 신규 사용자 가입 범위를 설정합니다.
+title: 로그인 및 가입
+description: 독립 사용자 이름과 비밀번호로 가입합니다. 이메일은 선택 사항이며 인증 메일을 보내지 않습니다. 가입 후 바로 로그인됩니다.
 ---
 
-import { Callout } from "fumadocs-ui/components/callout";
+독립 사용자 이름과 비밀번호로 가입합니다. 이메일은 선택 사항이며 인증 메일을 보내지 않습니다. 가입 후 바로 로그인됩니다.
 
-Multica는 기본적으로 이메일 인증 코드로 로그인하며 Google OAuth를 추가할 수도 있습니다. 기존 사용자는 언제든 다시 로그인할 수 있습니다. 가입 제한은 새 계정을 만들 수 있는지만 결정합니다.
+## 계정 규칙
 
-## 이메일 인증 코드
+사용자 이름은 대소문자를 구분하지 않는 3~32자의 ASCII 영문자, 숫자, 점, 밑줄, 하이픈이며 영문자나 숫자로 시작합니다. 비밀번호는 12~72바이트이며 bcrypt 해시로 저장됩니다.
 
-사용자가 이메일을 입력하면 Multica가 6자리 인증 코드를 보냅니다. 코드는 10분 동안 유효하며 인증에 성공하면 브라우저에 로그인 cookie가 발급됩니다.
+## 기존 계정과 복구
 
-이메일은 Resend 또는 SMTP로 보낼 수 있습니다. 둘 다 설정하면 `SMTP_HOST`가 우선합니다.
+관리자가 기존 사용자 UUID에 사용자 이름과 비밀번호를 설정하면 소속과 기록이 유지됩니다. 이전 이메일로 다시 가입해도 기존 권한을 얻지 못합니다. 이메일 비밀번호 복구는 제공하지 않습니다. 관리자가 같은 명령으로 재설정하며 기존 세션과 PAT는 해지되지 않습니다.
 
-### Resend 사용
-
-1. [Resend](https://resend.com/)에서 발신 도메인을 인증하고 API key를 만듭니다.
-2. 다음을 설정합니다.
-
-   ```dotenv
-   RESEND_API_KEY=re_xxxxxxxxxxxxxxxx
-   RESEND_FROM_EMAIL=noreply@example.com
-   ```
-
-3. API 서비스를 다시 시작합니다.
-
-`RESEND_FROM_EMAIL`은 Resend에서 인증한 도메인에 속해야 합니다.
-
-### SMTP 사용
-
-최소한 host와 발신 주소를 설정해야 합니다.
-
-```dotenv
-SMTP_HOST=smtp.example.com
-SMTP_PORT=587
-SMTP_USERNAME=multica
-SMTP_PASSWORD=<password>
-SMTP_FROM_EMAIL=noreply@example.com
+```bash
+read -r -s -p 'New password: ' MULTICA_ACCOUNT_PASSWORD
+printf '%s' "$MULTICA_ACCOUNT_PASSWORD" | \
+  bash scripts/dev-env.sh exec -- go -C server run ./cmd/account-admin \
+    --user-id=USER_UUID --username=alice --password-stdin
+unset MULTICA_ACCOUNT_PASSWORD
 ```
 
-일반적인 연결 방식은 다음과 같습니다.
+백엔드 이미지에도 `/app/account-admin`이 포함됩니다. 위 명령은 관리되는 개발 DB를 사용합니다. 배포 환경에서는 해당 `DATABASE_URL`로 실행하세요. 비밀번호는 표준 입력으로만 읽습니다. 공개 가입이 닫혀 있으면 `--user-id=USER_UUID`를 `--create`로 바꾸어 계정을 만들 수 있습니다. `--email=alice@example.com`은 선택 사항이며 이메일은 미인증 상태로 유지됩니다.
 
-| 환경 | 설정 |
-|---|---|
-| 내부 네트워크 익명 relay | `SMTP_PORT=25`, 사용자 이름과 비밀번호는 비워 둠 |
-| STARTTLS | `SMTP_PORT=587`, 서버가 지원하면 기본적으로 TLS로 업그레이드 |
-| 암시적 TLS | `SMTP_PORT=465` 또는 `SMTP_TLS=implicit` 명시 |
+## 가입 제한
 
-`SMTP_FROM_EMAIL`을 설정하지 않으면 `RESEND_FROM_EMAIL`을 사용합니다. 사설 CA 또는 자체 서명 인증서를 사용하려면 컨테이너 신뢰 저장소에 CA를 추가해야 합니다. `SMTP_TLS_INSECURE=true`는 인증서 검증을 건너뛰므로 신뢰할 수 있는 내부 네트워크에서만 임시로 사용하세요.
-
-일부 엄격한 relay에는 유효한 EHLO 이름도 필요합니다.
-
-```dotenv
-SMTP_EHLO_NAME=mail.example.com
-```
-
-### 이메일 서비스가 없을 때의 동작
-
-서버는 계속 시작되지만 인증 코드와 초대 링크가 이메일로 전송되지 않고 로그에만 기록됩니다. 로컬 개발에는 적합하지만 프로덕션 환경에는 적합하지 않습니다.
-
-시작 로그에는 현재 `Resend API`, `SMTP relay`, `DEV mode` 중 무엇을 사용하는지 표시됩니다.
-
-## 로컬 고정 인증 코드
-
-로컬 자동화 테스트에서는 고정 인증 코드를 설정할 수 있습니다.
-
-```dotenv
-APP_ENV=development
-MULTICA_DEV_VERIFICATION_CODE=888888
-```
-
-인증 코드는 6자리 숫자여야 합니다. `APP_ENV=production`에서는 고정 코드가 무시됩니다.
-
-<Callout type="warning">
-공개 인터넷에 노출된 인스턴스에서 고정 인증 코드를 사용하지 마세요. 프로덕션 환경에서는 `APP_ENV=production`을 사용하고 `MULTICA_DEV_VERIFICATION_CODE`를 비워 둡니다.
-</Callout>
-
-## Google 로그인
-
-1. [Google Cloud Console](https://console.cloud.google.com/)에서 OAuth 2.0 client를 만듭니다.
-2. Multica 프런트엔드의 callback 주소를 **Authorized redirect URIs**에 추가합니다.
-
-   ```text
-   https://multica.example.com/auth/callback
-   ```
-
-3. 다음을 설정합니다.
-
-   ```dotenv
-   GOOGLE_CLIENT_ID=xxxxx.apps.googleusercontent.com
-   GOOGLE_CLIENT_SECRET=GOCSPX-xxxxxxxxxxxxxxx
-   GOOGLE_REDIRECT_URI=https://multica.example.com/auth/callback
-   ```
-
-4. API 서비스를 다시 시작합니다.
-
-Google Console과 `GOOGLE_REDIRECT_URI`의 주소는 프로토콜, 포트, 마지막 슬래시까지 완전히 같아야 합니다. 설정이 적용되면 로그인 페이지에 Google 로그인 버튼이 표시됩니다. 프런트엔드 이미지를 다시 빌드할 필요는 없습니다.
-
-## 가입 범위 제어
-
-세 변수가 새 계정을 만들 수 있는지 함께 결정합니다.
-
-| 변수 | 역할 |
-|---|---|
-| `ALLOWED_EMAILS` | 허용할 전체 이메일 주소, 여러 값은 쉼표로 구분 |
-| `ALLOWED_EMAIL_DOMAINS` | 허용할 이메일 도메인, 여러 값은 쉼표로 구분 |
-| `ALLOW_SIGNUP` | allowlist가 없을 때 가입 허용 여부, 기본값 `true` |
-
-판단 순서는 다음과 같습니다.
-
-1. 이메일이 `ALLOWED_EMAILS`와 일치하면 허용합니다.
-2. 또는 도메인이 `ALLOWED_EMAIL_DOMAINS`와 일치하면 허용합니다.
-3. allowlist가 없고 `ALLOW_SIGNUP=true`이면 허용합니다.
-4. 그 외에도 해당 이메일에 대기 중이며 만료되지 않은 워크스페이스 초대가 있으면 허용합니다.
-5. 나머지는 거부합니다.
-
-일반적인 설정:
-
-```dotenv
-# 회사 도메인과 초대받은 사용자 허용
-ALLOW_SIGNUP=false
-ALLOWED_EMAIL_DOMAINS=company.com
-
-# 외부 협업자 한 명 추가 허용
-ALLOWED_EMAILS=partner@example.net
-```
-
-<Callout type="info">
-`ALLOW_SIGNUP=false`일 때도 두 allowlist를 명시적인 예외 목록으로 사용할 수 있습니다.
-</Callout>
-
-## 초대와 가입 제한
-
-대기 중이며 만료되지 않은 워크스페이스 초대가 있으면 `ALLOW_SIGNUP=false`이거나 이메일이 `ALLOWED_EMAILS` 또는 `ALLOWED_EMAIL_DOMAINS`와 일치하지 않아도 계정을 만들 수 있습니다. 이 예외는 `ALLOW_SIGNUP=true`이고 allowlist가 설정된 경우에도 적용됩니다. allowlist는 유효한 초대를 받은 사용자를 차단하는 절대적인 경계가 아닙니다.
-
-기존 사용자는 계속 로그인할 수 있습니다. 새 사용자가 allowlist와 일치하지 않고 공개 가입도 허용되지 않으면 대기 중이며 만료되지 않은 초대가 필요합니다. 없거나 만료, 수락, 거절, 취소된 초대는 가입 권한을 부여하지 않습니다. 로그인 코드를 요청할 때와 계정을 만들 때 초대를 확인하며, Google 로그인으로 계정을 만드는 경우에도 적용됩니다.
-
-일반 초대 사용자를 `ALLOWED_EMAILS`에 추가하거나 서버를 다시 시작할 필요가 없습니다. 워크스페이스에 참여하려면 계정을 만든 뒤에도 정상 초대 흐름에서 초대를 수락해야 합니다.
-
-초대를 취소해도 해당 초대로 이미 만든 계정은 삭제되지 않으며 기존 계정의 로그인도 차단되지 않습니다.
+ALLOW_SIGNUP=false는 공개 가입을 차단합니다. 확인되지 않은 이메일은 허용 목록이나 이메일 초대의 권한이 될 수 없습니다. 공개 가입을 사용하려면 이메일 허용 목록을 비우세요. 새 사용자는 명시적으로 공유된 링크로 워크스페이스에 참여할 수 있습니다.
 
 ## 로그인 유효 기간
 
-세션은 슬라이딩 갱신됩니다. 아래 값은 로그인 시점부터의 카운트다운이 아니라 **유휴** 한도입니다. 남은 유효 기간이 절반 아래로 내려가면 다음 요청에서 전체 기간으로 다시 발급되므로, 계속 사용하는 계정이 주기적으로 로그아웃되지 않습니다. 절대 상한은 없습니다.
+HttpOnly 쿠키 세션은 기본 30일이며 계속 사용하면 갱신됩니다. AUTH_TOKEN_TTL로 기간을 조정할 수 있습니다. CLI와 daemon의 PAT 인증은 유지됩니다.
 
-이 한도는 한쪽 방향으로만 적용됩니다. 절반 아래로 내려간 뒤에야 다시 발급되므로, 마지막 사용 시점에 절반 이상 남아 있던 세션은 연장되지 않습니다. 항상 견딜 수 있는 유휴 시간은 아래 값의 절반입니다.
+## 이메일 및 이전 클라이언트
 
-`AUTH_TOKEN_TTL`로 조정할 수 있으며 Go duration 또는 양의 정수 초를 지원합니다.
-
-```dotenv
-AUTH_TOKEN_TTL=720h
-```
-
-최솟값은 `60s`이며, 더 짧은 값은 `60s`로 조정되고 시작 시 경고가 기록됩니다. 이보다 짧으면 서버가 계산한 갱신 확인 주기가 클라이언트의 하한보다 낮아져, 세션이 유지될 수 있는 시간보다 드물게 확인하게 됩니다.
-
-변경 후 API 서비스를 다시 시작해야 합니다. 이 값은 이후 발급되거나 다시 발급되는 세션에 적용됩니다. 세션은 슬라이딩 갱신되므로 기존 세션도 다음 재발급 때 새 기간을 적용받습니다.
-
-## 다음 단계
-
-- [환경 변수](/environment-variables) — 전체 변수 참조를 확인합니다.
-- [인증과 토큰](/auth-tokens) — 로그인 세션과 토큰 유형을 알아봅니다.
-- [멤버와 권한](/members-roles) — 초대와 역할을 알아봅니다.
+Resend/SMTP는 선택적 알림 서비스입니다. 연락처 이메일은 신원이나 초대 권한을 증명하지 않습니다. 이전 send-code 및 verify-code 경로는 HTTP 410을 반환하므로 클라이언트를 업데이트하세요. Google OAuth API는 기존 연동용으로 유지되지만 새 폼은 사용자 이름과 비밀번호를 사용합니다.

@@ -9,9 +9,9 @@ Au quotidien, dans Multica, vous manipulez principalement deux types d'identifia
 
 ## Sessions de connexion du navigateur
 
-Après une connexion par code de vérification envoyé par e-mail ou via Google, Multica stocke un JWT dans un cookie HttpOnly nommé `multica_auth`. Le navigateur l'envoie automatiquement ; JavaScript ne peut pas le lire directement.
+Après une connexion par identifiant et mot de passe, Multica stocke un JWT dans un cookie HttpOnly nommé `multica_auth`. Le navigateur l'envoie automatiquement ; JavaScript ne peut pas le lire directement.
 
-Par défaut, une session dure 30 jours, mais il ne s'agit pas d'un compte à rebours depuis la connexion : une session utilisée en continu est réémise avant son expiration, si bien que rester connecté n'oblige pas à se reconnecter à intervalles réguliers. Elle n'est réémise qu'une fois passée la moitié de sa durée de vie ; une session inutilisée peut donc prendre fin moins de 30 jours après sa dernière utilisation. Les administrateurs d'instances auto-hébergées peuvent ajuster cette durée de vie avec `AUTH_TOKEN_TTL` ; voir [Configuration de la connexion et de l'inscription](/auth-setup#durée-de-vie-des-sessions). La déconnexion efface les cookies d'authentification et CSRF du navigateur courant.
+Par défaut, une session dure 30 jours, mais il ne s'agit pas d'un compte à rebours depuis la connexion : une session utilisée en continu est réémise avant son expiration, si bien que rester connecté n'oblige pas à se reconnecter à intervalles réguliers. Elle n'est réémise qu'une fois passée la moitié de sa durée de vie ; une session inutilisée peut donc prendre fin moins de 30 jours après sa dernière utilisation. Les administrateurs d'instances auto-hébergées peuvent ajuster cette durée de vie avec `AUTH_TOKEN_TTL` ; voir [Configuration de la connexion et de l'inscription](/auth-setup). La déconnexion efface les cookies d'authentification et CSRF du navigateur courant.
 
 Les cookies du navigateur ne sont pas faits pour être copiés dans des scripts ou dans le CLI ; utilisez un jeton d'accès personnel pour accéder à Multica depuis un terminal.
 

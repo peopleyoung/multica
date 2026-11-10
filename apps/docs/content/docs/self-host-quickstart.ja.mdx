@@ -33,7 +33,16 @@ docker compose version
 
 Multica は Compose v2（`docker compose`）を使います。旧版の `docker-compose` v1 はサポートされません。
 
-実行用コンピュータには、Claude Code、Codex、Cursor などの [AI コーディングツール](/providers)を最低 1 つインストールし、ログインしておく必要があります。Multica CLI はステップ 5 でインストールします。
+実行するコンピュータには Multica をインストールします。管理者が単一の LLM API とモデルを設定し、外部 AI CLI やそのアカウントは不要です。
+
+実行するコンピュータには Multica をインストールします。管理者が単一の LLM API とモデルを設定し、外部 AI CLI やそのアカウントは不要です。
+```dotenv
+MULTICA_LLM_API_KEY=
+MULTICA_LLM_BASE_URL=
+MULTICA_LLM_DEFAULT_MODEL=
+```
+
+[LLM API](/environment-variables): `MULTICA_LLM_CAPABILITIES_JSON`, `MULTICA_LLM_LIMITS_JSON`.
 
 ## 1. Multica を起動する
 
@@ -188,26 +197,9 @@ curl -fsS https://app.example.com/api/config | grep -o '"daemon_server_url":"[^"
 
 ## 4. ログインしてワークスペースを作成する
 
-ローカルの `http://localhost:3000`、または先ほど設定した `https://app.example.com` を開き、メールアドレスを入力して認証コードをリクエストします。
+独立したユーザー名とパスワードで登録します。メールは任意で、確認メールは送信しません。登録後すぐにログインします。
 
-デフォルトではメールサービスは設定されていません。コードをリクエストしたら、backend のログから読み取ります。
-
-```bash
-docker compose -f docker-compose.selfhost.yml logs backend \
-  | grep "Verification code"
-```
-
-ログには次のような行が出力されます。
-
-```text
-[DEV] Verification code for you@example.com: 123456
-```
-
-コードを入力して、最初のワークスペースを作成します。Resend または SMTP を設定すると認証コードはメールで送信され、メンバーがコンテナログを読む必要はなくなります。詳しくは[ログインとサインアップ設定](/auth-setup)を参照してください。
-
-<Callout type="warning">
-セルフホストのデプロイはデフォルトで `APP_ENV=production` を使い、固定の認証コードは有効になりません。公開インスタンスで `MULTICA_DEV_VERIFICATION_CODE` を設定しないでください。
-</Callout>
+[Account setup](/auth-setup)
 
 ## 5. 実行用コンピュータを接続する
 
@@ -256,7 +248,7 @@ multica daemon status
 正常であれば、出力に次が表示されます。
 
 - `Daemon: running`
-- `Agents` にこのマシンにインストール済みの AI コーディングツールが並ぶ
+- `Agents` にこのコンピュータの Multica Native が表示されます
 - `Workspaces` が `0` より大きい
 
 ## 6. 最初の実行を完了する
@@ -377,7 +369,6 @@ Helm には独自のアップグレード経路があります。values ファ�
 | 症状 | まず確認すること |
 |---|---|
 | `/readyz` が `ok` を返さない | `docker compose -f docker-compose.selfhost.yml logs backend postgres` を実行する。 |
-| 認証コードが届かない | コードを一度リクエストし、backend のログで `Verification code` を探す。 |
 | `setup self-host` が server に到達できないと報告する | 実行用コンピュータから `https://api.example.com/health` をリクエストし、DNS、TLS、リバースプロキシがすべて到達可能か確認する。404 が返る場合、プロキシが `/health` をこのパスを転送しない古い web リリースに向けているため、backend へ直接ルーティングすること（[トラブルシューティング](/troubleshooting#multica-setup-がサーバーに到達できないと報告する)）。 |
 | デーモンが `Agents` を表示しない | AI コーディングツールが `PATH` にありログイン済みであることを確認し、`multica daemon restart` を実行する。 |
 | タスクがキューにとどまり続ける | `multica daemon status` を実行し、デーモンが起動していてワークスペースに接続していることを確認する。 |

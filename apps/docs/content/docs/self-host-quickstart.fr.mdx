@@ -33,7 +33,16 @@ docker compose version
 
 Multica utilise Compose v2, invoqué via `docker compose`. L'ancien `docker-compose` v1 n'est pas pris en charge.
 
-L'ordinateur doit également disposer d'au moins un [outil de codage IA](/providers) installé et connecté, comme Claude Code, Codex ou Cursor. Le CLI Multica est installé à l'étape 5.
+Installez Multica sur l'ordinateur d'exécution. L'administrateur configure une API LLM et un modèle uniques ; aucun CLI IA externe ni compte associé n'est nécessaire.
+
+Installez Multica sur l'ordinateur d'exécution. L'administrateur configure une API LLM et un modèle uniques ; aucun CLI IA externe ni compte associé n'est nécessaire.
+```dotenv
+MULTICA_LLM_API_KEY=
+MULTICA_LLM_BASE_URL=
+MULTICA_LLM_DEFAULT_MODEL=
+```
+
+[LLM API](/environment-variables): `MULTICA_LLM_CAPABILITIES_JSON`, `MULTICA_LLM_LIMITS_JSON`.
 
 ## 1. Démarrer Multica
 
@@ -189,26 +198,9 @@ La dernière commande affiche `daemon_server_url`, l'URL que les daemons utilise
 
 ## 4. Se connecter et créer un espace de travail
 
-Ouvrez `http://localhost:3000` en local, ou le `https://app.example.com` que vous venez de configurer, puis saisissez votre adresse e-mail pour demander un code de vérification.
+Inscrivez-vous avec un nom d’utilisateur unique et un mot de passe. L’e-mail est facultatif et aucun code n’est envoyé. La connexion suit immédiatement l’inscription.
 
-Aucun service d'e-mail n'est configuré par défaut. Après avoir demandé un code, lisez-le dans les journaux du backend :
-
-```bash
-docker compose -f docker-compose.selfhost.yml logs backend \
-  | grep "Verification code"
-```
-
-Les journaux contiennent une ligne comme celle-ci :
-
-```text
-[DEV] Verification code for you@example.com: 123456
-```
-
-Saisissez le code et créez votre premier espace de travail. Une fois Resend ou SMTP configuré, les codes sont envoyés par e-mail et les membres n'ont plus besoin de lire les journaux des conteneurs — consultez [Configuration de l'authentification](/auth-setup).
-
-<Callout type="warning">
-Les déploiements auto-hébergés utilisent par défaut `APP_ENV=production`, qui désactive les codes de vérification fixes. Ne définissez pas `MULTICA_DEV_VERIFICATION_CODE` sur une instance publique.
-</Callout>
+[Account setup](/auth-setup)
 
 ## 5. Connecter un ordinateur
 
@@ -257,7 +249,7 @@ multica daemon status
 La sortie doit afficher :
 
 - `Daemon: running`
-- `Agents`, qui liste les outils de codage IA installés sur cette machine
+- `Agents` affiche Multica Native sur cet ordinateur
 - `Workspaces` supérieur à `0`
 
 ## 6. Terminer la première exécution
@@ -378,7 +370,6 @@ Helm a son propre chemin de mise à niveau : définissez `images.backend.tag` / 
 | Symptôme | À vérifier en premier |
 |---|---|
 | `/readyz` ne renvoie pas `ok` | Exécutez `docker compose -f docker-compose.selfhost.yml logs backend postgres`. |
-| Aucun code de vérification n'arrive | Demandez un code, puis cherchez `Verification code` dans les journaux du backend. |
 | `setup self-host` signale que le serveur est injoignable | Depuis l'ordinateur, envoyez une requête à `https://api.example.com/health` pour confirmer que le DNS, le TLS et le proxy inverse sont tous joignables. Un 404 signifie que le proxy envoie `/health` à une ancienne version web qui ne le relaie pas — routez-le vers le backend ([Dépannage](/troubleshooting#multica-setup-signale-que-le-serveur-est-injoignable)). |
 | Le daemon n'affiche rien sous `Agents` | Vérifiez que les outils de codage IA sont dans le `PATH` et connectés, puis exécutez `multica daemon restart`. |
 | Les tâches restent en file d'attente | Exécutez `multica daemon status` pour confirmer que le daemon tourne et qu'il est connecté à l'espace de travail. |

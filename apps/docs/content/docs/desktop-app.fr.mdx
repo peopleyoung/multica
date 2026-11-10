@@ -30,7 +30,7 @@ Choisissez le programme d'installation correspondant à votre système d'exploit
 | Windows | `.exe` |
 | Linux | `.AppImage`, `.deb` ou `.rpm` |
 
-Après l'installation, connectez-vous avec la même adresse e-mail que sur le web. Une fois connecté, Desktop démarre son propre CLI Multica intégré et détecte les outils de codage IA déjà installés sur la machine.
+Connectez-vous avec la même adresse e-mail que sur le web. Desktop démarre son daemon Multica intégré et enregistre le runtime Multica Native.
 
 <Callout type="info">
 Le CLI intégré à Desktop sert uniquement au runtime géré par l'application. Si vous voulez aussi exécuter des commandes comme `multica issue` dans un terminal, installez le CLI séparément en suivant l'[étape 2 du démarrage rapide](/cloud-quickstart#2-connectez-un-ordinateur).
@@ -54,7 +54,7 @@ Après la connexion, Desktop crée un profil CLI dédié au service Multica cour
 
 Il ne lit ni n'écrase jamais le profil par défaut que vous utilisez dans le terminal. Si vous démarrez aussi manuellement un autre daemon, Multica les affiche comme des runtimes distincts.
 
-Vous pouvez consulter l'état et les journaux du runtime dans les paramètres de Desktop. Si un outil n'est pas détecté, vérifiez d'abord qu'il fonctionne dans un terminal ordinaire et qu'il est connecté, puis redémarrez le daemon de Desktop.
+Consultez l'état et les journaux dans les paramètres Desktop. Si le runtime est hors ligne, vérifiez la connexion au service et redémarrez le daemon. Le modèle est géré par l'administrateur du déploiement.
 
 ## Mettre à jour Desktop
 

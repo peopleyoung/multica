@@ -93,7 +93,7 @@ scripts/check.sh
 
 部分 AI 编程工具也会直接读取代码仓库中的项目级 skill，例如 `.claude/skills/` 或 `.agents/skills/`。这些文件仍由仓库管理，Multica 不会自动把它们登记为工作区 skill。具体支持方式取决于使用的工具，见 [AI 编程工具对照](/providers)。
 
-连接电脑上已安装的运行时本地 skill（Claude Code 和 Codex）会显示在智能体的 **Skills** 标签页中，可以按智能体单独停用。停用同样需要有权修改该智能体。
+连接电脑的 `~/.agents/skills` 中的本地 skill 会显示在智能体的 **Skills** 标签页，可按智能体停用；修改需要相应权限。Multica 不扫描 Claude Code、Codex 等外部 CLI 的配置目录。
 
 ## 修改权限
 

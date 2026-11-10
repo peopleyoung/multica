@@ -163,24 +163,9 @@ GODEBUG=tlsmlkem=0 multica --debug login
 
 これで成功する場合は、CLI とデーモンを実行するユーザーに対して `GODEBUG=tlsmlkem=0` を恒久的に設定し（Windows では `[Environment]::SetEnvironmentVariable('GODEBUG', 'tlsmlkem=0', 'User')` を実行して新しいターミナルを開く）、デーモンまたはデスクトップアプリを再起動してください。`MULTICA_HTTP_TIMEOUT` を大きくしても効果はありません。ハンドシェイクはこの設定の対象外です。根本的な解決はネットワーク側で行います。分割された TLS ハンドシェイクを破棄する機器やソフトウェアを更新または再設定してください。
 
-## 認証コードや招待メールが届かない
+## 招待通知メールが届かない
 
-まず backend の起動ログを確認します。ログには、現在使っているのが `SMTP relay`、`Resend API`、`DEV mode` のどれかが表示されます:
-
-```bash
-docker compose -f docker-compose.selfhost.yml logs backend \
-  | grep "EmailService:"
-```
-
-- **DEV mode**: メールは送信されず、認証コードと招待リンクは backend ログに書き込まれるだけです。
-- **Resend**: API key が有効で、送信元アドレスのドメインが検証済みであることを確認します。
-- **SMTP**: ホスト、ポート、資格情報、送信元アドレスを確認し、エラーログから失敗が接続、TLS、認証、配送のどの段階で起きたかを判断します。
-
-`SMTP_HOST` と Resend が両方設定されている場合、Multica は SMTP を優先します。設定方法は[ログインとサインアップ](/auth-setup#メール認証コード)を参照してください。
-
-<Callout type="warning">
-プロダクションではログ内の認証コードに依存せず、固定のローカルテスト認証コードも有効にしないでください。
-</Callout>
+ユーザー名とパスワードのログインでは確認メールを送りません。メール配信は通知と招待の任意設定です。`SMTP_HOST`、`SMTP_PORT`、送信元または `RESEND_API_KEY` を確認してください。両方を設定すると SMTP を優先します。未設定の場合、招待リンクはバックエンドログに記録されます。[環境変数](/environment-variables)を参照してください。
 
 ## 添付ファイルのアップロードやダウンロードが失敗する
 

@@ -6,12 +6,12 @@ description: Connectez un ordinateur, créez votre premier agent et faites-lui a
 import { Callout } from "fumadocs-ui/components/callout";
 
 <Callout type="info">
-Avant qu'un agent puisse s'exécuter, l'ordinateur qui l'exécute doit disposer d'au moins un [outil de codage IA pris en charge](/providers), installé et connecté — par exemple Claude Code, Codex ou Cursor. Multica ne fournit pas ces outils.
+Installez Multica sur l'ordinateur d'exécution. L'administrateur configure une seule API LLM et un seul modèle ; Multica Native exécute les agents. Aucune installation ni connexion à un CLI IA externe n'est requise.
 </Callout>
 
 ## 1. Connectez-vous et ouvrez votre espace de travail
 
-Connectez-vous sur le web ([multica.ai](https://multica.ai)) ou avec [Multica Desktop](https://multica.ai/download). La connexion par code de vérification envoyé par e-mail et la connexion Google sont toutes deux prises en charge.
+Inscrivez-vous avec un nom d’utilisateur unique et un mot de passe. L’e-mail est facultatif et aucun code n’est envoyé. La connexion suit immédiatement l’inscription.
 
 - **Desktop** : peut connecter automatiquement cet ordinateur.
 - **Web** : connectez l'ordinateur depuis la ligne de commande à l'étape suivante.
@@ -20,7 +20,7 @@ Connectez-vous sur le web ([multica.ai](https://multica.ai)) ou avec [Multica De
 
 Les agents exécutent le travail sur les ordinateurs que vous connectez. Ouvrez **Équipe IA → Runtimes** en bas de la barre latérale :
 
-- **Avec Desktop** : Desktop enregistre automatiquement cet ordinateur comme runtime et détecte les outils de codage IA installés. Pour un outil que vous venez d'installer, cliquez sur **Actualiser** pour relancer la détection.
+- **Avec Desktop** : la connexion démarre le daemon Multica et enregistre cet ordinateur comme runtime Multica Native.
 - **Avec le Web, ou pour ajouter un autre ordinateur** : cliquez sur **Ajouter un ordinateur** en haut à droite, puis exécutez les deux commandes de la boîte de dialogue dans un terminal de l'ordinateur cible :
 
   **macOS / Linux**
@@ -51,7 +51,7 @@ Les commandes de connexion diffèrent légèrement sur les instances auto-héber
 
 Ouvrez **Équipe IA → Agents** dans la barre latérale, cliquez sur **Nouvel agent** et choisissez une méthode :
 
-- **Partir de zéro** : remplissez vous-même les champs. Seul le nom est strictement obligatoire — confirmez le runtime et l'outil de codage IA, puis créez l'agent.
+- Confirmez l'ordinateur d'exécution et le modèle fixe avant de créer l'agent.
 - **Construire avec l'IA** : décrivez ce que vous voulez ; l'Agent Builder vous pose des questions et génère la configuration. Cette méthode nécessite un runtime en ligne.
 
 Tout le reste peut être affiné plus tard — voir [Créer et configurer des agents](/agents-create).
@@ -82,7 +82,7 @@ Après validation, ouvrez la tâche : le journal d'exécution affiche le statut 
 
 | Symptôme | À vérifier en premier |
 |---|---|
-| Aucun runtime trouvé | Vérifiez que l'outil de codage IA est installé et fonctionne dans un terminal. Sur Desktop, cliquez sur **Actualiser** ; avec le CLI, relancez `multica setup`. |
+| Aucun runtime trouvé | Gardez Desktop ouvert ou exécutez `multica daemon status` puis `multica daemon start` ; vérifiez la connexion au service et la configuration du modèle. |
 | Le runtime apparaît hors ligne | Gardez Desktop ouvert ; avec le CLI, exécutez `multica daemon status`, puis `multica daemon start` s'il n'est pas lancé. |
 | La tâche reste en file d'attente | Vérifiez que le runtime utilisé par l'agent est en ligne. Lorsqu'un runtime atteint sa limite de parallélisme, les nouvelles exécutions restent en file d'attente. |
 

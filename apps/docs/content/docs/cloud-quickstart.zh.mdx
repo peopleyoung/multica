@@ -6,12 +6,12 @@ description: 连接一台电脑，创建你的第一个智能体，并让它完�
 import { Callout } from "fumadocs-ui/components/callout";
 
 <Callout type="info">
-智能体执行前，运行它的电脑上需要有至少一款已安装并登录的[支持的 AI 编程工具](/providers)，例如 Claude Code、Codex 或 Cursor。Multica 不自带这些工具。
+运行电脑只需安装 Multica。部署方统一配置单一 LLM API 和模型，智能体通过 Multica Native 执行；无需安装或登录外部 AI CLI。
 </Callout>
 
 ## 1. 登录，进入工作区
 
-用 Web（[multica.ai](https://multica.ai)）或 [Multica Desktop](https://multica.ai/download) 登录，支持邮箱验证码和 Google。
+使用独立用户名和密码注册。邮箱可选，不发送验证邮件；注册成功后立即登录。
 
 - **Desktop**：可以自动连接这台电脑。
 - **Web**：需要在下一步通过命令行连接。
@@ -20,7 +20,7 @@ import { Callout } from "fumadocs-ui/components/callout";
 
 智能体在你连接的电脑上执行工作。打开侧边栏底部的 **配置 → 运行时**：
 
-- **用 Desktop**：Desktop 会自动把这台电脑注册为运行时，并检测已安装的 AI 编程工具。刚安装的工具，点"刷新"重新检测。
+- **用 Desktop**：登录后自动启动 Multica daemon，并将这台电脑注册为 Multica Native 运行时。
 - **用 Web，或需要添加另一台电脑**：点右上角的 **添加电脑**，在目标电脑的终端里运行弹窗给出的两条命令：
 
  **macOS / Linux**
@@ -51,7 +51,7 @@ import { Callout } from "fumadocs-ui/components/callout";
 
 打开侧边栏的 **工作区 → 智能体**，点 **新建智能体**，选择一条路径：
 
-- **从空白开始**：自己填字段。最少只需要名称，再确认运行时和 AI 编程工具即可创建。
+- 确认运行电脑和固定模型后创建智能体。
 - **通过 AI 创建**：描述你想要什么，由 Agent Builder 提问并生成配置。这条路径需要一个在线运行时。
 
 其余配置可以之后完善，详见[创建和配置智能体](/agents-create)。
@@ -82,7 +82,7 @@ import { Callout } from "fumadocs-ui/components/callout";
 
 | 现象 | 先检查什么 |
 |---|---|
-| 没有找到运行时 | 确认 AI 编程工具已经安装并能在终端中运行。Desktop 点"刷新"；CLI 方式重新运行 `multica setup`。 |
+| 没有找到运行时 | 确认 Desktop 保持打开，或运行 `multica daemon status`、`multica daemon start`；检查服务连接和模型配置。 |
 | 运行时显示离线 | Desktop 保持打开；CLI 方式运行 `multica daemon status`，未启动时运行 `multica daemon start`。 |
 | 任务一直排队 | 确认智能体使用的运行时在线。运行时达到并发上限时，新运行会继续排队。 |
 

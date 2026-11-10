@@ -163,24 +163,9 @@ GODEBUG=tlsmlkem=0 multica --debug login
 
 如果这样能成功，请为运行 CLI 和守护进程的用户永久设置 `GODEBUG=tlsmlkem=0`——Windows 上执行 `[Environment]::SetEnvironmentVariable('GODEBUG', 'tlsmlkem=0', 'User')` 后重新打开终端——然后重启守护进程或桌面应用。调高 `MULTICA_HTTP_TIMEOUT` 无效，它不控制握手。根本解决需要在网络侧处理：升级或重新配置丢弃分包 TLS 握手的设备或软件。
 
-## 验证码与邀请邮件未送达
+## 邀请通知邮件未送达
 
-先查看 backend 启动日志。日志会说明当前使用 `SMTP relay`、`Resend API` 还是 `DEV mode`：
-
-```bash
-docker compose -f docker-compose.selfhost.yml logs backend \
- | grep "EmailService:"
-```
-
-- **DEV mode**：邮件不会发出，验证码和邀请链接只写入 backend 日志；
-- **Resend**：确认 API key 有效，且发件地址的域名已经验证；
-- **SMTP**：确认主机、端口、凭据和发件地址，并从错误日志判断失败发生在连接、TLS、认证还是投递阶段。
-
-`SMTP_HOST` 和 Resend 同时配置时，Multica 会优先使用 SMTP。配置方式见[登录与注册](/auth-setup#邮箱验证码)。
-
-<Callout type="warning">
-生产环境不要依赖日志中的验证码，也不要启用固定本地测试验证码。
-</Callout>
+用户名密码登录不发送验证邮件，邮件服务仅用于可选的通知和邀请。检查 `SMTP_HOST`、`SMTP_PORT`、发件地址或 `RESEND_API_KEY`；同时配置时优先使用 SMTP。未配置邮件服务时，邀请链接只写入 backend 日志，见[环境变量](/environment-variables)。
 
 ## 附件上传或下载失败
 

@@ -5,7 +5,7 @@ description: Choose a starting point, then define the agent's responsibilities, 
 
 import { Callout } from "fumadocs-ui/components/callout";
 
-Creating an agent requires a working [runtime](/daemon-runtimes) first. The runtime decides which computer and which AI coding tool the agent uses; the agent holds the long-lived identity, instructions, and capabilities.
+Creating an agent requires a working [runtime](/daemon-runtimes) first. The runtime selects the execution computer. Workspace owners and admins configure API models in **Settings → Models**, and each agent can choose a model or follow the workspace default.
 
 On the workspace **Agents** page, click **New agent**.
 
@@ -33,7 +33,7 @@ Every other field can start with its default and be adjusted after creation. By 
 
 ## Description and instructions
 
-The **description** is a short introduction for the team. It appears only in the agent list and detail page, and never enters the AI coding tool's prompt.
+The **description** is a short introduction for the team. It appears only in the agent list and detail page, and never enters the model's instructions.
 
 **Instructions** are provided to the agent on every run and usually cover:
 
@@ -73,15 +73,9 @@ If you leave the list empty, Chat shows localized general-purpose defaults. Agen
 
 From the CLI, set them with `--conversation-starters` on `agent create` and `agent update` (a JSON array of `{ "label", "prompt" }` objects; pass `'[]'` on update to clear). `agent copy` still copies the source value and has no override flag.
 
-## Runtime, model, and thinking level
+## Runtime and model
 
-Each runtime already maps to one AI coding tool. After picking a runtime, you can pick a model and thinking level the tool supports; some tools (such as Codex) also offer a service tier:
-
-- Left blank, the runtime or local CLI default applies.
-- With a model set, the agent uses that override for runs it picks up afterwards.
-- Some runtimes manage models themselves, so no model picker is shown.
-
-Tools differ in supported models, session resume, skills, and MCP capabilities — see [AI coding tools comparison](/providers).
+Choose an execution computer for the agent. Choose one of the enabled workspace models, or follow the workspace default. Different agents can use different API endpoints and models on the same computer. API keys stay encrypted on the server. CLI profiles are not supported.
 
 ## Access
 
@@ -104,9 +98,8 @@ On the agent's detail page you can keep adjusting:
 | Setting | What it does |
 |---|---|
 | **Concurrency limit** | How many runs the agent can run at the same time. The default is 6; runs beyond the cap keep queuing. |
-| **Environment variables** | Inject variables when the AI coding tool starts. |
-| **Custom arguments** | Appended item by item to the AI coding tool's CLI arguments. |
-| **MCP** | Provide MCP server configuration for AI coding tools that support it. |
+| **Environment variables** | Inject variables into the run's local tools. |
+| **MCP** | Provide MCP server configuration for the native runtime. |
 | **Integrations** | Connect external services this agent can use. |
 
 The daemon hosting the runtime also has a global concurrency cap (default 20); the effective concurrency is the smaller of the two.
@@ -125,15 +118,9 @@ Do not use production database admin passwords or other high-value long-lived cr
 
 Critical runtime variables such as `PATH`, `HOME`, and `MULTICA_*` cannot be overridden here.
 
-## Custom arguments and MCP
+## MCP
 
-Custom arguments are passed to the AI coding tool as an array, item by item, without shell expansion. Whether an argument is valid is up to the tool; model configuration that already has a dedicated field doesn't need to be repeated here.
-
-<Callout type="warning">
-Do not put credentials or other secrets in custom arguments. They remain in the child process's argv and may be visible to other local processes through `ps` or `/proc`; use environment variables (`custom_env`) instead. Daemon logs redact argument values, but that does not protect the operating system's process list.
-</Callout>
-
-MCP configuration may contain tokens; its storage and display rules match environment variables. Only runtimes that support managed MCP configuration show this section; tools without MCP support don't gain it just because a configuration is saved.
+MCP configuration may contain tokens; its storage and display rules match environment variables. The native runtime supports stdio and remote HTTP/SSE tools under the agent's existing permissions. MCP sampling, resources, and prompts are not exposed.
 
 ## Duplicating an agent
 

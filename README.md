@@ -115,9 +115,9 @@ issue — so nobody reconstructs context, and nothing ships without a human sayi
   Linux. It connects the computer it runs on as a runtime automatically.
 - **Self-host** — run the whole stack on your own infrastructure; see below.
 
-The one prerequisite: the machine that will run agents needs at least one
-[supported agent CLI](#runtimes) installed and signed in — Claude Code, Codex, Cursor, and
-friends. Multica drives them; it doesn't ship them.
+Connect each execution computer with the Multica daemon. The API server uses one configured
+LLM deployment for runs, summaries, titles and suggestions. No external AI coding CLI or
+provider account is needed on execution computers.
 
 <details>
 <summary><b>Self-hosting the whole thing</b></summary>
@@ -145,12 +145,11 @@ turn it off — [what's collected](SELF_HOSTING.md#anonymous-deployment-telemetr
 ### Your first agent in five minutes
 
 **1. Connect a computer.** A *runtime* is any machine agents can work on — your laptop, or a
-cloud box. Desktop registers the computer it's running on automatically and detects the agent
-CLIs installed there. On the web — or to add another machine — open **Runtimes** in the sidebar,
+cloud box. Desktop registers Multica Native on the computer automatically. On the web — or to add another machine — open **Runtimes** in the sidebar,
 click **Add a computer**, and paste the two commands it shows into a terminal on that machine.
 
 **2. Create an agent.** Open **Agents** in the sidebar and click **New agent**. Pick the runtime
-you just connected, pick a provider, and give it a name — or let **Build with AI** generate the
+you just connected and give it a name — or let **Build with AI** generate the
 configuration from a description. That name is how it shows up on the board and in comments.
 
 **3. Assign it something.** File an issue and set the agent as assignee. It picks the task up,
@@ -162,27 +161,18 @@ Full walkthrough: [Quickstart](https://multica.ai/docs/cloud-quickstart) · [Tut
 
 ## Runtimes
 
-Multica does not ship a model. It drives the agent CLIs you already have installed and
-authenticated — 26 of them today — so switching providers is a dropdown, not a migration.
+Multica Native runs the execution loop and tools directly. The API server holds the deployment's
+single model and credentials; daemons receive run-scoped authorization. Configure
+`MULTICA_LLM_BASE_URL`, `MULTICA_LLM_API_KEY`, `MULTICA_LLM_DEFAULT_MODEL` and
+`MULTICA_LLM_CAPABILITIES_JSON` on the API server. File writes and Shell access require
+separate permissions on the daemon host.
 
-| Provider | CLI | Provider | CLI |
-| --- | --- | --- | --- |
-| Claude Code | `claude` | OpenAI Codex | `codex` |
-| Cursor Agent | `cursor-agent` | GitHub Copilot CLI | `copilot` |
-| OpenCode | `opencode` | OpenClaw | `openclaw` |
-| Hermes | `hermes` | Pi | `pi` |
-| Antigravity | `agy` | CodeBuddy | `codebuddy` |
-| DevEco Code | `deveco` | Grok | `grok` |
-| Kimi | `kimi` | Kiro CLI | `kiro-cli` |
-| Qoder CLI | `qodercli` | Qoder CN | `qoderclicn` |
-| Qwen Code | `qwen` | QwenPaw | `qwenpaw` |
-| Reasonix | `reasonix` | Trae CLI | `traecli` |
-| DeepSeek Harness | `dsh` | Oh-My-Pi | `omp` |
-| MiniMax Code | `mcode` | Dim | `dim` |
-| Huawei Cloud CodeArts | `codearts` | ZeroClaw | `zeroclaw` |
+For existing deployments, drain active runs and migrate bindings before replacing daemons.
+Historical messages, artifacts and project directories remain available; external CLI sessions
+start a new native conversation. See the [migration guide](docs/engineering/native-runtime-migration.zh.md).
 
-Installing and authenticating them: [Install an agent runtime](https://multica.ai/docs/install-agent-runtime) ·
-[Providers](https://multica.ai/docs/providers)
+[Connect Multica Native](https://multica.ai/docs/install-agent-runtime) ·
+[Deployment model](https://multica.ai/docs/providers)
 
 ---
 

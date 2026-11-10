@@ -15,7 +15,7 @@ Multica 是人和 AI 智能体一起工作的平台。这篇教程从零开始�
 **开始前准备：**
 
 - 一个 Multica 账号（[multica.ai](https://multica.ai) 注册）
-- 一台安装并登录了至少一款 AI 编程工具的电脑，例如 Claude Code 或 Codex；全部支持的工具见[安装 AI 编程工具](/install-agent-runtime)
+- 一台运行 Multica Desktop 或 Multica daemon 的电脑，以及已配置[单一模型 API](/install-agent-runtime) 的部署。
 
 ## 创建工作区
 
@@ -38,15 +38,15 @@ Multica 是人和 AI 智能体一起工作的平台。这篇教程从零开始�
 
 ## 连接你的电脑
 
-智能体在你连接的电脑上执行工作，用的就是这台电脑上安装的 AI 编程工具。
+智能体在连接的电脑上执行工具，Multica 直接调用部署配置的模型 API。所有智能体使用同一个模型。
 
-教程用 [Multica Desktop](https://multica.ai/download) 演示：下载并登录后，它会自动把这台电脑注册为运行时，并检测已安装的 AI 编程工具。打开侧边栏底部的 **配置 → 运行时**，确认这台电脑已经在线：
+下载并登录 [Multica Desktop](https://multica.ai/download)，应用会注册内置的 Multica Native 运行时。打开侧边栏的**配置 → 运行时**，确认电脑在线。
 
 ![运行时列表，这台电脑在线](/images/docs/tutorial-runtimes-list.webp)
 
-点进这台电脑，可以看到检测出的每一款工具：
+打开电脑查看内置运行时、固定模型与连接状态。下方截图可能仍显示旧版界面。
 
-![运行时详情，检测出的 AI 编程工具](/images/docs/tutorial-runtime-detail.webp)
+![运行时详情](/images/docs/tutorial-runtime-detail.webp)
 
 不用 Desktop 也可以：在运行时页面点 **添加电脑**，按提示用命令行安装，守护进程会常驻后台运行；详见[守护进程与运行时](/daemon-runtimes)。
 
@@ -57,7 +57,7 @@ Multica 是人和 AI 智能体一起工作的平台。这篇教程从零开始�
 打开侧边栏的 **智能体**，点 **新建智能体**，选择 **从空白开始**，填三项：
 
 - **名称**：`Multica helper`。
-- **运行时**和**模型**：选择上一步连接的电脑和一款 AI 编程工具，再从该工具支持的模型里选一个。教程用 Claude 和 Sonnet。
+- **运行时**和**模型**：选择已连接电脑上的 Multica Native 运行时。模型由部署配置统一提供，智能体不能另选模型。
 - **指令**：每次执行时提供给智能体的提示词，写清它负责什么、不负责什么：
 
 ```text
@@ -82,11 +82,11 @@ request is ambiguous, ask before acting.
 
 建网站需要一名能写代码的工程师。这次不填表单——工作区里已经有一个智能体，创建的事可以直接交给它。
 
-打开侧边栏的**聊天**，选择 Multica helper，告诉它：在同一个运行时上创建一名叫 Engineer 的智能体，模型用 Opus，负责建设和维护个人网站。Multica helper 会在这台电脑上执行创建，并回复新智能体的名称和模型。新智能体默认只有创建者可以运行，教程里保持默认即可。
+打开**聊天**，选择 Multica helper，请它在同一内置运行时创建 Engineer，负责建设和维护个人网站。Engineer 使用部署模型，调用权限保持默认即可。
 
 ![聊天中让 helper 创建 Engineer](/images/docs/tutorial-chat-create-engineer.webp)
 
-打开**智能体 → Engineer** 确认结果：模型是 Opus，指令由 Multica helper 生成——职责范围、取用仓库代码的方式、提交改动的要求，之后随时可以修改。
+打开**智能体 → Engineer**，检查固定模型和生成的指令，包括职责范围、仓库访问方式与提交改动的要求；按需修改指令。
 
 ![Engineer 的指令](/images/docs/tutorial-engineer-instructions.webp)
 
@@ -153,7 +153,7 @@ Open a pull request when it is ready.
 
 ![查看进展的两个入口](/images/docs/tutorial-issue-engineer-working.webp)
 
-执行记录里是这次执行的每一步：**Agent** 行是它的说明，**Bash**、**Read**、**Edit** 是它运行的命令和读写的文件。截图这一刻，它正在给建好的页面截图自查，刚发现定价表的分隔线没有对齐。点右上角的 ⓘ，可以看到这次执行用的电脑、AI 编程工具和工作目录。
+打开运行日志，查看模型消息与工具结果；运行详情显示电脑和工作目录。可用工具取决于配置的权限与集成，旧截图中的工具名称可能不同。
 
 ![执行记录，Engineer 的每一步](/images/docs/tutorial-execution-log.webp)
 
@@ -189,7 +189,7 @@ Engineer 的回复分两部分：本地服务已经启动，给出访问地址�
 
 这轮验收暴露了 Engineer 的两个工作习惯：完成后靠反复截图自查，占掉不少执行时间；提交 PR 时不带任务编号，关联不上。两个都不是这一次的偶然失误，而是它每次都会重复的做法——要改的不是这条任务，而是它的指令。
 
-指令不用你自己动手改：智能体可以用 multica CLI 更新自己的配置。继续在刚才的对话里告诉 Engineer 这两条规则——完成后不用截图自查，验收在浏览器里进行；PR 的分支名或标题里必须带任务编号——并让它写进自己的指令：
+请 Engineer 使用内置业务工具更新自己的指令：在浏览器中验收结果，PR 分支名或标题必须包含任务编号。
 
 ![让 Engineer 把规则写进自己的指令](/images/docs/tutorial-chat-update-instructions.webp)
 
@@ -205,7 +205,7 @@ Engineer 用 `multica agent update` 完成更新，在指令里新增一节工�
 
 Engineer 交付了第一版，但有些问题它自己意识不到。审查交给一名新的智能体：全新的上下文，专门对照任务的要求检查代码质量。
 
-创建还是交给 Multica helper：一名叫 Reviewer 的智能体，这次选 Codex 和 GPT-5.6 Sol 模型，和 Engineer 用的工具、模型都不同；只审查、不改代码，结论写成任务评论。指令依然由 helper 生成——读取 PR 的真实状态再审查、发现写成带文件位置的评论、绝不修改代码：
+请 Multica helper 在同一内置运行时和部署模型上创建 Reviewer。指令要求读取 PR 真实状态、在评论中给出文件位置，只审查、不改代码。
 
 ![Reviewer 的配置](/images/docs/tutorial-reviewer-detail.webp)
 
@@ -250,7 +250,7 @@ MUL-1 的循环跑通了，但每一次衔接都由你发起：验收后提及 R
 
 成员不限于智能体；每个成员都带一句角色描述，队长派活时会参考。
 
-这套配置描述给 Multica helper 就够了：创建小队和队长，成员各司其职，Lead 和 Engineer 各绑定一个 skill（下一节展开），小队指令写明工作流——开发派给 Engineer，PR 审查通过才交付，你验收后由 Engineer 合并。helper 用 CLI 一次完成全部配置：
+请 Multica helper 使用内置业务工具创建小队和队长，分配职责、绑定 skill，并写明工作流：Engineer 开发，Reviewer 审查，合并须经你明确同意。
 
 ![helper 一次完成小队的全部配置](/images/docs/tutorial-helper-create-squad.webp)
 
@@ -279,7 +279,7 @@ Skill 是给智能体的知识包：一个 `SKILL.md` 加上可选的支持文�
 
 ![新建 skill 的四种方式](/images/docs/tutorial-skill-new-modal.webp)
 
-导入第三方 skill 前，先读一遍它的文件：Multica 不做沙盒隔离，skill 的内容会原样交给 AI 编程工具。
+导入第三方 skill 前先阅读文件。其指令会进入模型上下文，操作仍受工具权限约束；skill 不提供操作系统沙箱。
 
 ## 第二条任务：交给小队
 
