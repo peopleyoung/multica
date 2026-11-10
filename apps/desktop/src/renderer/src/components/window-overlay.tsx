@@ -38,7 +38,7 @@ function WindowOverlayInner() {
   const { push } = useNavigation();
   const { data: wsList = [] } = useQuery(workspaceListOptions());
   // Live local-daemon signal for the onboarding runtime step so it doesn't
-  // flash "no runtime found" while the daemon is still probing CLI versions.
+  // flash "no runtime found" while the daemon is still registering.
   const runtimesPending = useLocalRuntimesPending();
 
   if (!overlay) return null;
@@ -48,10 +48,7 @@ function WindowOverlayInner() {
   // complete the flow.
   const onBack = wsList.length > 0 ? close : undefined;
 
-  // The daemon's PATH probe runs once at boot, so a newly-installed CLI
-  // (Claude / Codex / Cursor) does not show up until the daemon is bounced.
-  // Both onboarding entries need this — creating a second workspace hits the
-  // same runtime step.
+  // Restart reconnects the local native runtime for either onboarding entry.
   const restartDaemon = async () => {
     await window.daemonAPI?.restart?.();
   };

@@ -36,6 +36,7 @@ import (
 	"github.com/multica-ai/multica/server/internal/issuestatus"
 	obsmetrics "github.com/multica-ai/multica/server/internal/metrics"
 	"github.com/multica-ai/multica/server/internal/middleware"
+	"github.com/multica-ai/multica/server/internal/modelcontrol"
 	"github.com/multica-ai/multica/server/internal/realtime"
 	"github.com/multica-ai/multica/server/internal/seatcapacity"
 	"github.com/multica-ai/multica/server/internal/service"
@@ -137,9 +138,12 @@ type Config struct {
 	//   - LLMMaxRetries    -> MULTICA_LLM_MAX_RETRIES (transport retry budget)
 	//   - LLMDisableThinking -> MULTICA_LLM_DISABLE_THINKING (gateway hint to
 	//     turn model reasoning off; see llm.Config.DisableThinking)
-	LLMAPIKey       string
-	LLMBaseURL      string
-	LLMDefaultModel string
+	LLMAPIKey        string
+	LLMBaseURL       string
+	LLMDefaultModel  string
+	LLMCapabilities  llm.Capabilities
+	LLMLimits        modelcontrol.Limits
+	ModelCallMetrics *obsmetrics.BusinessMetrics
 	// LLMMaxRetries is the parsed MULTICA_LLM_MAX_RETRIES budget. nil means
 	// unset (llm.DefaultMaxRetries applies); llm.Retries(0) disables retries.
 	// The type carries the validation: it can only be built through llm.Retries,
@@ -398,7 +402,10 @@ type Handler struct {
 	// MUL-4309, so it is internal-only now. Always non-nil (New builds it from
 	// Config); when unconfigured its Enabled() reports false and callers fall
 	// back silently.
-	LLM *llm.Client
+	LLM             *llm.Client
+	ModelSecretBox  *secretbox.Box
+	ModelAdmission  llm.Admission
+	ModelMaxRetries *llm.RetryOverride
 	// VCSSecretBox encrypts/decrypts per-workspace Git provider access tokens and
 	// webhook secrets at rest (Forgejo / Gitea / GitLab). Nil when
 	// MULTICA_VCS_SECRET_KEY is unset; connect returns 403 and webhook returns 404
@@ -451,12 +458,15 @@ func New(queries *db.Queries, txStarter txStarter, hub *realtime.Hub, bus *event
 		daemonRuntimeGone = daemonHub
 	}
 
+	modelAdmission := modelcontrol.New(txStarter, cfg.LLMLimits, cfg.ModelCallMetrics)
 	llmClient := llm.New(llm.Config{
+		Admission:       modelAdmission,
 		APIKey:          cfg.LLMAPIKey,
 		BaseURL:         cfg.LLMBaseURL,
 		DefaultModel:    cfg.LLMDefaultModel,
 		MaxRetries:      cfg.LLMMaxRetries,
 		DisableThinking: cfg.LLMDisableThinking,
+		Capabilities:    cfg.LLMCapabilities,
 	})
 	// Report the effective retry policy so an operator can confirm from the
 	// boot log alone what a misbehaving upstream will cost, instead of inferring
@@ -478,10 +488,7 @@ func New(queries *db.Queries, txStarter txStarter, hub *realtime.Hub, bus *event
 	taskSvc := service.NewTaskService(queries, txStarter, hub, bus, daemonHub)
 	taskSvc.Analytics = analyticsClient
 	taskSvc.SourceContextStorage = store
-	// Chat follow-up suggestions run through the same internal LLM layer that
-	// backs auto-titling. A deployment with no MULTICA_LLM_* configuration gets
-	// a disabled client, which turns the feature off rather than failing.
-	taskSvc.QuickActions = llmClient
+
 	h := &Handler{
 		Queries:                      queries,
 		ReadSelector:                 dbreader.NewPrimaryOnly(queries),
@@ -516,8 +523,10 @@ func New(queries *db.Queries, txStarter txStarter, hub *realtime.Hub, bus *event
 			BaseURL: cfg.CloudURL,
 			Timeout: cfg.CloudTimeout,
 		}),
-		LLM: llmClient,
-		cfg: cfg,
+		LLM:             llmClient,
+		ModelAdmission:  modelAdmission,
+		ModelMaxRetries: cfg.LLMMaxRetries,
+		cfg:             cfg,
 	}
 	h.WebhookDeliveryWorker = NewWebhookDeliveryWorker(h)
 	// The default passthrough scheduler reports sweeper-race recoveries so the
@@ -537,6 +546,10 @@ func New(queries *db.Queries, txStarter txStarter, hub *realtime.Hub, bus *event
 	}
 	h.PRRefresh = ghsnapshot.NewManager(ghClient, queries, txStarter, h.broadcastPRSnapshotApplied)
 	taskSvc.PRSnapshotsEnabled = h.PRRefresh.Enabled()
+
+	taskSvc.QuickActionsForTask = func(ctx context.Context, task db.AgentTaskQueue) (service.ChatQuickActionsLLM, error) {
+		return h.nativeTaskModel(ctx, task)
+	}
 
 	return h
 }

@@ -15,7 +15,11 @@
     "coming_soon": "Agents coming soon.",
     "title": "Agents",
     "empty": "No agents yet",
-    "search_placeholder": "Search agents..."
+    "search_placeholder": "Search agents...",
+    "managed_model": "Deployment model",
+    "model_unavailable": "Model configuration unavailable",
+    "needs_migration": "Native runtime migration required",
+    "machine_unavailable": "Machine unavailable"
   },
   "actions": {
     "retry": "Retry",

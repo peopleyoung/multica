@@ -6,6 +6,7 @@ import {
   Bell,
   Blocks,
   CircleDot,
+  Cpu,
   CreditCard,
   FolderGit2,
   Keyboard,
@@ -55,6 +56,7 @@ import { QuickActionsTab } from "./quick-actions-tab";
 import { KeyboardShortcutsTab } from "./keyboard-shortcuts-tab";
 import { PluginsTab } from "./plugins-tab";
 import { McpTab } from "./mcp-tab";
+import { ModelsTab } from "./models-tab";
 import { BillingTab } from "./billing-tab";
 import { SETTINGS_ANCHOR_ATTR } from "./settings-layout";
 import { searchSettings } from "./settings-search";
@@ -189,6 +191,7 @@ export function SettingsPage({ extraDeviceTabs = [] }: SettingsPageProps = {}) {
             entry("members", t(($) => $.page.tabs.members), Users, <MembersTab />, {
               adminOnly: true,
             }),
+            entry("models", t(($) => $.models.title), Cpu, <ModelsTab />, { adminOnly: true }),
             ...(billingEnabled
               ? [
                   entry(

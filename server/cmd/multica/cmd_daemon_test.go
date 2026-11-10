@@ -94,19 +94,7 @@ func TestPrintDaemonStatusIncludesCLIVersion(t *testing.T) {
 	}
 }
 
-func TestBuildDaemonStartArgsForwardsCodexHandshakeTimeout(t *testing.T) {
-	cmd := &cobra.Command{}
-	cmd.Flags().Duration("codex-handshake-timeout", 0, "")
-	if err := cmd.Flags().Set("codex-handshake-timeout", "42s"); err != nil {
-		t.Fatalf("set flag: %v", err)
-	}
 
-	args := buildDaemonStartArgs(cmd)
-	want := []string{"daemon", "start", "--foreground", "--codex-handshake-timeout", (42 * time.Second).String()}
-	if strings.Join(args, " ") != strings.Join(want, " ") {
-		t.Fatalf("buildDaemonStartArgs() = %q, want %q", args, want)
-	}
-}
 
 func TestBuildDaemonStartArgsForwardsWSClaimPollInterval(t *testing.T) {
 	cmd := &cobra.Command{}

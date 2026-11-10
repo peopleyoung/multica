@@ -71,6 +71,7 @@ export function StepRuntimeConnect({
   return (
     <FancyView
       wsId={wsId}
+      wsSlug={wsSlug}
       runtimes={runtimes}
       selected={selected}
       selectedId={selectedId}
@@ -100,6 +101,7 @@ const EMPTY_HARD_TIMEOUT_MS = 20000;
 
 function FancyView({
   wsId,
+  wsSlug,
   runtimes,
   selected,
   selectedId,
@@ -110,6 +112,7 @@ function FancyView({
   currentUserId,
 }: {
   wsId: string;
+  wsSlug?: string;
   runtimes: AgentRuntime[];
   selected: AgentRuntime | null;
   selectedId: string | null;
@@ -237,6 +240,7 @@ function FancyView({
         {phase === "scanning" && <ScanningView />}
         {phase === "found" && (
           <FoundView
+            workspace={{ id: wsId, slug: wsSlug }}
             runtimes={runtimes}
             selectedId={selectedId}
             onSelect={setSelectedId}
@@ -321,6 +325,7 @@ function ScanningView() {
 }
 
 function FoundView({
+  workspace,
   runtimes,
   selectedId,
   onSelect,
@@ -331,6 +336,7 @@ function FoundView({
   onModelChange,
   currentUserId,
 }: {
+  workspace: { id: string; slug?: string };
   runtimes: AgentRuntime[];
   selectedId: string | null;
   onSelect: (id: string) => void;
@@ -382,6 +388,7 @@ function FoundView({
 
       <div className="mt-6 flex flex-col gap-4">
         <MikaRuntimeChoice
+          workspace={workspace}
           runtimes={runtimes}
           currentUserId={currentUserId}
           value={{ runtimeId: selectedId ?? "", model }}

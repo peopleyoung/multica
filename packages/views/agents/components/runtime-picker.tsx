@@ -328,6 +328,7 @@ function computeFilteredRuntimes(
   filter: RuntimeFilter,
   currentUserId: string | null,
 ): RuntimeDevice[] {
+  runtimes = runtimes.filter((runtime) => runtime.provider === "native" && !runtime.profile_id);
   const filtered =
     filter === "mine" && currentUserId
       ? runtimes.filter((r) => r.owner_id === currentUserId)

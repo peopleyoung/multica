@@ -119,7 +119,7 @@ func TestAgentRuntimeLookupBatchClaimIsAttributed(t *testing.T) {
 
 	// max_tasks=0 returns before the runtime read, so claim a real slot.
 	testutil.Call(t, testHandler.ClaimTasksByRuntime,
-		batchClaimRequest(testWorkspaceID, []string{runtimeID, missing}, 1, "")).Want(http.StatusOK)
+		batchClaimRequest(t, testWorkspaceID, []string{runtimeID, missing}, 1, "")).Want(http.StatusOK)
 
 	after := lookupSnapshot(t, m)
 	for _, want := range []struct {

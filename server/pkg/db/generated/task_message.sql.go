@@ -14,7 +14,7 @@ import (
 const createTaskMessage = `-- name: CreateTaskMessage :one
 INSERT INTO task_message (id, task_id, seq, type, tool, content, input, output, output_truncated, call_id)
 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
-RETURNING id, task_id, seq, type, tool, content, input, output, created_at, output_truncated, call_id
+RETURNING id, task_id, seq, type, tool, content, input, output, created_at, output_truncated, call_id, dedup_key
 `
 
 type CreateTaskMessageParams struct {
@@ -56,6 +56,7 @@ func (q *Queries) CreateTaskMessage(ctx context.Context, arg CreateTaskMessagePa
 		&i.CreatedAt,
 		&i.OutputTruncated,
 		&i.CallID,
+		&i.DedupKey,
 	)
 	return i, err
 }
@@ -77,12 +78,13 @@ WITH incoming AS (
         unnest($7::text[]) AS input,
         unnest($8::text[]) AS output,
         unnest($9::text[]) AS created_at,
-        unnest($10::text[]) AS output_truncated
+        unnest($10::text[]) AS output_truncated,
+        unnest($11::text[]) AS dedup_key
 ), inserted AS (
-    INSERT INTO task_message (id, task_id, seq, type, tool, content, input, output, created_at, output_truncated, call_id)
+    INSERT INTO task_message (id, task_id, seq, type, tool, content, input, output, created_at, output_truncated, call_id, dedup_key)
     SELECT
         m.id,
-        $11::uuid,
+        $12::uuid,
         m.seq,
         m.type,
         NULLIF(m.tool, ''),
@@ -91,11 +93,13 @@ WITH incoming AS (
         NULLIF(m.output, ''),
         COALESCE(NULLIF(m.created_at, '')::timestamptz, now()),
         NULLIF(m.output_truncated, '')::bool,
-        NULLIF(m.call_id, '')
+        NULLIF(m.call_id, ''),
+        NULLIF(m.dedup_key, '')
     FROM incoming AS m
-    RETURNING id, task_id, seq, type, tool, content, input, output, created_at, output_truncated, call_id
+    ON CONFLICT (task_id, dedup_key) WHERE dedup_key IS NOT NULL DO NOTHING
+    RETURNING id, task_id, seq, type, tool, content, input, output, created_at, output_truncated, call_id, dedup_key
 )
-SELECT id, task_id, seq, type, tool, content, input, output, created_at, output_truncated, call_id FROM inserted ORDER BY seq ASC
+SELECT id, task_id, seq, type, tool, content, input, output, created_at, output_truncated, call_id, dedup_key FROM inserted ORDER BY seq ASC
 `
 
 type CreateTaskMessagesParams struct {
@@ -109,6 +113,7 @@ type CreateTaskMessagesParams struct {
 	Outputs           []string      `json:"outputs"`
 	CreatedAts        []string      `json:"created_ats"`
 	OutputTruncations []string      `json:"output_truncations"`
+	DedupKeys         []string      `json:"dedup_keys"`
 	TaskID            pgtype.UUID   `json:"task_id"`
 }
 
@@ -124,13 +129,15 @@ type CreateTaskMessagesRow struct {
 	CreatedAt       pgtype.Timestamptz `json:"created_at"`
 	OutputTruncated pgtype.Bool        `json:"output_truncated"`
 	CallID          pgtype.Text        `json:"call_id"`
+	DedupKey        pgtype.Text        `json:"dedup_key"`
 }
 
 // Batch variant of CreateTaskMessage: persists a whole daemon-reported batch in
 // ONE statement — therefore one round trip and, more importantly, one commit
 // instead of one per message. Commit acknowledgement (IO:XactSync) is ~94% of
 // this SQL's load in production, so the commit count is the thing being
-// optimized; the round trip is a bonus.
+// optimized; the round trip is a bonus. The caller supplies claim/event-stable
+// deduplication keys; retransmitted rows are not republished or recounted.
 //
 // The rows arrive as parallel arrays rather than as one jsonb document, even
 // though a jsonb document is the tidier Go side. content and output routinely
@@ -161,7 +168,8 @@ type CreateTaskMessagesRow struct {
 // transcript with a prefix of the batch and no way to complete it — the daemon
 // does not retry this endpoint. One statement makes the batch all-or-nothing,
 // which buys consistency; a batch that fails is still lost whole, so closing
-// the gap for real needs a retry plus a (task_id, seq) uniqueness rule.
+// the gap for real still needs daemon-side retries. Deduplication keys make
+// repeated callbacks safe without another commit or a read-before-write race.
 //
 // The ORDER BY is a contract, not decoration. A bare `INSERT ... RETURNING`
 // has no defined row order, and the caller republishes these rows as realtime
@@ -181,6 +189,7 @@ func (q *Queries) CreateTaskMessages(ctx context.Context, arg CreateTaskMessages
 		arg.Outputs,
 		arg.CreatedAts,
 		arg.OutputTruncations,
+		arg.DedupKeys,
 		arg.TaskID,
 	)
 	if err != nil {
@@ -202,6 +211,7 @@ func (q *Queries) CreateTaskMessages(ctx context.Context, arg CreateTaskMessages
 			&i.CreatedAt,
 			&i.OutputTruncated,
 			&i.CallID,
+			&i.DedupKey,
 		); err != nil {
 			return nil, err
 		}
@@ -224,7 +234,7 @@ func (q *Queries) DeleteTaskMessages(ctx context.Context, taskID pgtype.UUID) er
 }
 
 const listTaskMessages = `-- name: ListTaskMessages :many
-SELECT id, task_id, seq, type, tool, content, input, output, created_at, output_truncated, call_id FROM task_message
+SELECT id, task_id, seq, type, tool, content, input, output, created_at, output_truncated, call_id, dedup_key FROM task_message
 WHERE task_id = $1
 ORDER BY seq ASC
 `
@@ -250,6 +260,7 @@ func (q *Queries) ListTaskMessages(ctx context.Context, taskID pgtype.UUID) ([]T
 			&i.CreatedAt,
 			&i.OutputTruncated,
 			&i.CallID,
+			&i.DedupKey,
 		); err != nil {
 			return nil, err
 		}
@@ -262,7 +273,7 @@ func (q *Queries) ListTaskMessages(ctx context.Context, taskID pgtype.UUID) ([]T
 }
 
 const listTaskMessagesSince = `-- name: ListTaskMessagesSince :many
-SELECT id, task_id, seq, type, tool, content, input, output, created_at, output_truncated, call_id FROM task_message
+SELECT id, task_id, seq, type, tool, content, input, output, created_at, output_truncated, call_id, dedup_key FROM task_message
 WHERE task_id = $1 AND seq > $2
 ORDER BY seq ASC
 `
@@ -293,6 +304,7 @@ func (q *Queries) ListTaskMessagesSince(ctx context.Context, arg ListTaskMessage
 			&i.CreatedAt,
 			&i.OutputTruncated,
 			&i.CallID,
+			&i.DedupKey,
 		); err != nil {
 			return nil, err
 		}

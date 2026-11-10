@@ -321,7 +321,9 @@ export function AgentCreatePanel({
     setActiveMode("agent");
   }, [setActiveMode]);
 
-  // Daemon CLI version gate. The agent-create flow needs the runtime's
+  // External runtimes use the bundled CLI for creation; the native runtime
+  // uses API business tools and has no bundled CLI version requirement.
+  // The external agent-create flow needs the runtime's
   // bundled multica CLI to be ≥ MIN_QUICK_CREATE_CLI_VERSION; older
   // daemons handle attachments and partial-failure retries incorrectly
   // (see PR #1851 / MUL-1496). Pre-check on the picker so the user gets
@@ -361,6 +363,7 @@ export function AgentCreatePanel({
   const versionCheck = usesExplicitFields ? fieldVersionCheck : baseVersionCheck;
   const versionBlocked =
     canPrecheckVersion &&
+    selectedRuntime.provider !== "native" &&
     (baseVersionCheck.state !== "ok" ||
       (usesExplicitFields && fieldVersionCheck.state !== "ok"));
 

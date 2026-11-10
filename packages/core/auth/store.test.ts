@@ -33,6 +33,31 @@ function makeApi(): ApiClient {
 }
 
 describe("authStore", () => {
+  for (const cookieAuth of [true, false]) {
+    it.each(["passwordLogin", "registerAccount"] as const)(
+      `%s establishes a session with cookieAuth=${cookieAuth}`,
+      async (method) => {
+        const storage = makeStorage();
+        const api = makeApi();
+        api[method] = vi.fn().mockResolvedValue({ token: "new-session", user: fakeUser });
+        const onLogin = vi.fn();
+        const store = createAuthStore({ api, storage, cookieAuth, onLogin });
+        store.setState({ expired: true });
+
+        await expect(store.getState()[method]("alice", "Strong password 2026")).resolves.toEqual(fakeUser);
+
+        expect(store.getState()).toMatchObject({
+          user: fakeUser, status: "authenticated", isLoading: false, expired: false,
+        });
+        expect(onLogin).toHaveBeenCalledOnce();
+        expect(storage.snapshot().multica_token).toBe(cookieAuth ? undefined : "new-session");
+        if (cookieAuth) expect(api.setToken).not.toHaveBeenCalled();
+        else expect(api.setToken).toHaveBeenCalledWith("new-session");
+        expect(JSON.stringify(storage.snapshot())).not.toContain("Strong password 2026");
+      },
+    );
+  }
+
   it("publishes a retry request instead of silently ignoring it", () => {
     const storage = makeStorage({ multica_token: "t" });
     const api = makeApi();

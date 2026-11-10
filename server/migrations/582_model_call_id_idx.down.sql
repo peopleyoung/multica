@@ -1,0 +1,1 @@
+DROP INDEX CONCURRENTLY IF EXISTS model_call_id_idx;

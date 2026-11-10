@@ -58,7 +58,7 @@ type PrepareParams struct {
 	Profile      string
 	Provider     string // agent provider (determines runtime config and skill injection paths)
 	CodexVersion string // detected Codex CLI version (only used when Provider == "codex")
-	OpenclawBin  string // resolved openclaw CLI path (only used when Provider == "openclaw"); empty = look up on PATH
+
 	// McpConfig is the agent's saved `mcp_config` JSON, forwarded to the
 	// provider-specific config preparer when that provider materialises MCP
 	// via a per-task config file. Cursor, OpenClaw, and OMP consume it here;
@@ -68,11 +68,7 @@ type PrepareParams struct {
 	// file, or the Cursor project data directory containing it. Only Cursor's
 	// managed MCP path consumes it.
 	CursorMcpAuthSource string
-	// OpenclawGateway pins the OpenClaw Gateway endpoint inside the per-task
-	// wrapper. Only consulted when Provider == "openclaw" and the agent's
-	// runtime_config selected gateway mode (issue #3260). Zero means "inherit
-	// whatever the user's global openclaw.json already configures".
-	OpenclawGateway OpenclawGatewayPin
+
 	// LocalWorkDir, when non-empty, redirects the agent's working directory
 	// to a user-supplied absolute path instead of the synthesised envRoot/
 	// workdir. The path is NOT copied or mounted — the agent operates on
@@ -602,9 +598,6 @@ func Prepare(params PrepareParams, logger *slog.Logger) (*Environment, error) {
 	if err := writeContextFiles(workDir, params.Provider, params.Task, manifest); err != nil {
 		return nil, fmt.Errorf("execenv: write context files: %w", err)
 	}
-	if err := prepareOmpMcpConfig(workDir, params.Provider, params.McpConfig, manifest); err != nil {
-		return nil, fmt.Errorf("execenv: prepare omp mcp config: %w", err)
-	}
 
 	// Persist managed-env provenance for non-local resumable envs at Prepare time
 	// (not on completion, where .gc_meta.json is written). A same-issue
@@ -626,79 +619,6 @@ func Prepare(params PrepareParams, logger *slog.Logger) (*Environment, error) {
 		}
 	}
 
-	// For Codex, set up a per-task CODEX_HOME seeded from ~/.codex/ with skills.
-	if params.Provider == "codex" {
-		codexHome := filepath.Join(envRoot, codexHomeDirName)
-		if err := prepareCodexHomeWithOpts(codexHome, CodexHomeOptions{CodexVersion: params.CodexVersion, IsLocalDirectory: params.LocalWorkDir != "" || params.LocalWorktree != nil, SessionStoreKey: codexSessionStoreKey(params.Profile, params.Task), CodexCustomArgs: params.CodexCustomArgs}, logger); err != nil {
-			return nil, fmt.Errorf("execenv: prepare codex-home: %w", err)
-		}
-		if err := hydrateCodexSkills(codexHome, params.Task.AgentSkills, params.Task.DisabledRuntimeSkills, logger); err != nil {
-			return nil, fmt.Errorf("execenv: hydrate codex skills: %w", err)
-		}
-		env.CodexHome = codexHome
-	}
-
-	if params.Provider == "claude" {
-		settingsPath, err := prepareClaudeSkillSettings(envRoot, params.Task.DisabledRuntimeSkills, params.Task.AgentSkills)
-		if err != nil {
-			return nil, fmt.Errorf("execenv: prepare claude skill settings: %w", err)
-		}
-		env.ClaudeSettingsPath = settingsPath
-	}
-
-	// For Hermes, redirect HERMES_HOME to a per-task compatibility overlay ONLY
-	// when the agent has skills bound. A skill-less Hermes task keeps the user's
-	// real home and its original behavior untouched. The overlay makes the bound
-	// skills visible — Hermes discovers skills only from its home, so the old
-	// .agent_context/skills/ fallback was never read (issue #5242). See
-	// hermes_home.go.
-	//
-	// Note this is a local contract, not an observable product behaviour: the
-	// server appends the platform's built-in skills to every agent's skill set
-	// (service.LoadAgentSkillBundles), so a claimed task's AgentSkills is never
-	// empty and the skill-less branch is effectively unreachable in production.
-	// Emptying an agent's own skill list is NOT a way to opt out of the overlay.
-	if params.Provider == "hermes" && len(params.Task.AgentSkills) > 0 {
-		hermesHome := filepath.Join(envRoot, "hermes-home")
-		sessions, err := prepareHermesHome(hermesHome, params.HermesSourceHome, params.HermesSourceMustExist, params.Task.AgentSkills, params.HermesEnv, params.HermesMemoryStore, params.HermesSessionStore, logger)
-		if err != nil {
-			return nil, fmt.Errorf("execenv: prepare hermes-home: %w", err)
-		}
-		env.HermesHome = hermesHome
-		if sessions.Mounted {
-			env.HermesSessionStore = params.HermesSessionStore
-			env.HermesSessionHistoryPresent = sessions.HistoryPresent
-		}
-	}
-	if params.Provider == "qwenpaw" {
-		qwenpawWorkspace := filepath.Join(envRoot, "qwenpaw-workspace")
-		if err := prepareQwenpawWorkspace(qwenpawWorkspace, params.Task.AgentSkills, logger); err != nil {
-			return nil, fmt.Errorf("execenv: prepare qwenpaw workspace: %w", err)
-		}
-		env.QwenpawWorkspace = qwenpawWorkspace
-	}
-
-	// For Reasonix, deny the `ask` tool for this task through a project-scoped
-	// reasonix.toml. Degraded, not fatal: without it the task still runs under
-	// the backend's fail-closed question handling.
-	if params.Provider == "reasonix" {
-		if err := writeReasonixProjectConfig(workDir, params.ReasonixEnv, manifest, logger); err != nil {
-			logger.Warn("execenv: write reasonix project config failed", "error", err)
-		}
-	}
-
-	// For Cursor, materialize managed MCP into project-local config and use
-	// an isolated CURSOR_DATA_DIR for the per-workdir approval sidecar. Cursor
-	// still reads ~/.cursor/mcp.json, but only servers with approval entries in
-	// this per-task data dir can load, so user-global MCP servers do not leak
-	// into managed-MCP runs.
-	if params.Provider == "cursor" {
-		cursorDataDir, err := prepareCursorMcpConfig(envRoot, workDir, params.McpConfig, params.CursorMcpAuthSource, manifest)
-		if err != nil {
-			return nil, fmt.Errorf("execenv: prepare cursor mcp config: %w", err)
-		}
-		env.CursorDataDir = cursorDataDir
-	}
 
 	if err := writeSidecarManifest(envRoot, manifest); err != nil {
 		// In place the manifest is the ONLY record of what we wrote into the
@@ -712,27 +632,6 @@ func Prepare(params PrepareParams, logger *slog.Logger) (*Environment, error) {
 			return nil, fmt.Errorf("execenv: write sidecar manifest: %w", err)
 		}
 		logger.Warn("execenv: write sidecar manifest failed (non-fatal)", "error", err)
-	}
-
-	// For OpenClaw, synthesize a per-task config that pins workspace to
-	// workDir. The skill scanner then reads {workDir}/skills/ (written by
-	// writeContextFiles above). Fail closed on errors: a malformed user
-	// config that the openclaw CLI can't read is a real problem and
-	// silently degrading to a minimal config would mask it by booting
-	// OpenClaw without the agents / providers / API keys it expects.
-	if params.Provider == "openclaw" {
-		result, err := prepareOpenclawConfig(envRoot, workDir, OpenclawConfigPrep{
-			OpenclawBin: params.OpenclawBin,
-			CacheDir:    openclawProfileCacheDir(params.Profile, logger),
-			McpConfig:   params.McpConfig,
-			Gateway:     params.OpenclawGateway,
-			Logger:      logger,
-		})
-		if err != nil {
-			return nil, fmt.Errorf("execenv: prepare openclaw config: %w", err)
-		}
-		env.OpenclawConfigPath = result.ConfigPath
-		env.OpenclawIncludeRoot = result.IncludeRoot
 	}
 
 	logger.Info("execenv: prepared env", "root", envRoot, "repos_available", len(params.Task.Repos))
@@ -760,7 +659,7 @@ type ReuseParams struct {
 	// exposed into the new task-local sessions dir so thread/resume still finds
 	// it. Empty means a fresh thread. See prepareCodexSessionsDir (MUL-4424).
 	ResumeSessionID string
-	OpenclawBin     string // only used when Provider == "openclaw"; empty = PATH lookup
+
 	// McpConfig is the agent's saved `mcp_config` JSON. Reused on reuse so a
 	// freshly-saved managed set re-materialises into the wrapper before the
 	// task starts — without this a stale wrapper from a prior run would keep
@@ -768,9 +667,7 @@ type ReuseParams struct {
 	McpConfig json.RawMessage
 	// CursorMcpAuthSource mirrors PrepareParams.CursorMcpAuthSource on reuse.
 	CursorMcpAuthSource string
-	// OpenclawGateway is the per-task Gateway pin re-applied on reuse so the
-	// agent picks up any runtime_config changes saved since the prior run.
-	OpenclawGateway OpenclawGatewayPin
+
 	// Profile is the daemon's profile name (empty = default), mirroring
 	// PrepareParams.Profile so a reused task keys its per-issue Codex session
 	// store into the same profile namespace (MUL-4424).
@@ -901,109 +798,7 @@ func Reuse(params ReuseParams, logger *slog.Logger) *Environment {
 	if err := writeContextFiles(params.WorkDir, params.Provider, params.Task, manifest); err != nil {
 		logger.Warn("execenv: refresh context files failed", "error", err)
 	}
-	if err := prepareOmpMcpConfig(params.WorkDir, params.Provider, params.McpConfig, manifest); err != nil {
-		logger.Warn("execenv: refresh omp mcp config failed; forcing fresh prepare", "error", err)
-		return nil
-	}
 
-	// Restore CodexHome for Codex provider — the per-task codex-home directory
-	// lives alongside the workdir. Re-run prepareCodexHomeWithOpts to ensure
-	// config (especially sandbox/network access) is up to date.
-	if params.Provider == "codex" {
-		codexHome := filepath.Join(env.RootDir, codexHomeDirName)
-		if err := prepareCodexHomeWithOpts(codexHome, CodexHomeOptions{CodexVersion: params.CodexVersion, ResumeSessionID: params.ResumeSessionID, IsLocalDirectory: params.LocalDirectory, SessionStoreKey: codexSessionStoreKey(params.Profile, params.Task), CodexCustomArgs: params.CodexCustomArgs}, logger); err != nil {
-			// Leaving env.CodexHome empty does not launch Codex against an
-			// ambient home: configureCodexTaskShellEnvironment rejects the empty
-			// value ("task CODEX_HOME is missing") and the run fails before
-			// launch. Decline the reuse instead, so the caller falls back to
-			// Prepare and the task still gets a usable task-local home. The
-			// prior session is not carried over, and a fresh Prepare that fails
-			// the same way still stops the task.
-			logger.Warn("execenv: refresh codex-home failed; forcing fresh prepare", "error", err)
-			return nil
-		} else {
-			env.CodexHome = codexHome
-			if err := hydrateCodexSkills(codexHome, params.Task.AgentSkills, params.Task.DisabledRuntimeSkills, logger); err != nil {
-				logger.Warn("execenv: refresh codex skills failed", "error", err)
-			}
-		}
-	}
-
-	if params.Provider == "claude" && env.RootDir != "" {
-		settingsPath, err := prepareClaudeSkillSettings(env.RootDir, params.Task.DisabledRuntimeSkills, params.Task.AgentSkills)
-		if err != nil {
-			logger.Warn("execenv: refresh claude skill settings failed", "error", err)
-		} else {
-			env.ClaudeSettingsPath = settingsPath
-		}
-	}
-
-	// Re-deny Reasonix's `ask` tool on reuse: CleanupSidecars above removed the
-	// prior run's reasonix.toml, so without this the next turn would run with
-	// the tool available again.
-	if params.Provider == "reasonix" {
-		if err := writeReasonixProjectConfig(params.WorkDir, params.ReasonixEnv, manifest, logger); err != nil {
-			logger.Warn("execenv: refresh reasonix project config failed", "error", err)
-		}
-	}
-
-	// Refresh (or tear down) the per-task QwenPaw workspace on reuse.
-	// Rebuild the workspace so an added/removed/edited skill is reflected.
-	if params.Provider == "qwenpaw" && env.RootDir != "" {
-		qwenpawWorkspace := filepath.Join(env.RootDir, "qwenpaw-workspace")
-		if err := prepareQwenpawWorkspace(qwenpawWorkspace, params.Task.AgentSkills, logger); err != nil {
-			logger.Warn("execenv: refresh qwenpaw workspace failed; forcing fresh prepare", "error", err)
-			return nil
-		}
-		env.QwenpawWorkspace = qwenpawWorkspace
-	}
-
-	// Refresh (or tear down) the per-task HERMES_HOME on reuse. With skills
-	// bound, rebuild the overlay so an added/removed/edited skill and the
-	// mirrored home/config track the user's current ~/.hermes/ before the next
-	// hermes process starts. With no skills bound, drop the redirect entirely so
-	// the task reverts to the user's real home — matching a fresh Prepare for a
-	// skill-less agent.
-	if params.Provider == "hermes" && env.RootDir != "" {
-		hermesHome := filepath.Join(env.RootDir, "hermes-home")
-		if len(params.Task.AgentSkills) > 0 {
-			sessions, err := prepareHermesHome(hermesHome, params.HermesSourceHome, params.HermesSourceMustExist, params.Task.AgentSkills, params.HermesEnv, params.HermesMemoryStore, params.HermesSessionStore, logger)
-			if err != nil {
-				// Fail closed: a half-built overlay must not run. Returning nil
-				// makes the daemon fall back to a fresh Prepare, whose error
-				// then blocks dispatch rather than silently dropping the bound
-				// skill.
-				logger.Warn("execenv: refresh hermes-home failed; forcing fresh prepare", "error", err)
-				return nil
-			}
-			env.HermesHome = hermesHome
-			env.HermesSessionStore = ""
-			env.HermesSessionHistoryPresent = false
-			if sessions.Mounted {
-				env.HermesSessionStore = params.HermesSessionStore
-				env.HermesSessionHistoryPresent = sessions.HistoryPresent
-			}
-		} else {
-			env.HermesHome = ""
-			env.HermesSessionStore = ""
-			env.HermesSessionHistoryPresent = false
-			if err := os.RemoveAll(hermesHome); err != nil {
-				logger.Warn("execenv: remove stale hermes-home failed", "error", err)
-			}
-		}
-	}
-
-	// Refresh Cursor's managed MCP sidecars on reuse. A newly saved agent
-	// mcp_config must replace the prior run's .cursor/mcp.json and isolated
-	// approvals before the next cursor-agent process starts.
-	if params.Provider == "cursor" && env.RootDir != "" {
-		cursorDataDir, err := prepareCursorMcpConfig(env.RootDir, params.WorkDir, params.McpConfig, params.CursorMcpAuthSource, manifest)
-		if err != nil {
-			logger.Warn("execenv: refresh cursor mcp config failed", "error", err)
-			return nil
-		}
-		env.CursorDataDir = cursorDataDir
-	}
 
 	if env.RootDir != "" {
 		if err := writeSidecarManifest(env.RootDir, manifest); err != nil {
@@ -1011,66 +806,8 @@ func Reuse(params ReuseParams, logger *slog.Logger) *Environment {
 		}
 	}
 
-	// Refresh the per-task OpenClaw config on reuse — the user may have
-	// added/removed agents or rotated providers since the prior task ran,
-	// and the workspace override always re-targets the current workDir.
-	// Fail closed: a user config that can no longer be parsed should block
-	// reuse rather than degrade to a minimal config that boots OpenClaw
-	// without the registered agents.
-	if params.Provider == "openclaw" {
-		result, err := prepareOpenclawConfig(env.RootDir, params.WorkDir, OpenclawConfigPrep{
-			OpenclawBin: params.OpenclawBin,
-			CacheDir:    openclawProfileCacheDir(params.Profile, logger),
-			McpConfig:   params.McpConfig,
-			Gateway:     params.OpenclawGateway,
-			Logger:      logger,
-		})
-		if err != nil {
-			logger.Warn("execenv: refresh openclaw config failed", "error", err)
-			return nil
-		}
-		env.OpenclawConfigPath = result.ConfigPath
-		env.OpenclawIncludeRoot = result.IncludeRoot
-	}
-
 	logger.Info("execenv: reusing env", "workdir", params.WorkDir)
 	return env
-}
-
-// hydrateCodexSkills populates the per-task CODEX_HOME/skills directory with
-// both user-installed skills (from the shared ~/.codex/skills/) and
-// workspace-assigned skills. Workspace skills win on name conflict — they are
-// written last and seedUserCodexSkills already pre-filters their names.
-//
-// The skills directory is wiped first so two stale-state classes that the
-// Reuse path would otherwise leak are gone:
-//
-//   - A name now claimed by a workspace skill that previously held only a
-//     user-seeded copy — support files from the user version would otherwise
-//     linger under the workspace skill's directory.
-//   - A user skill removed from the shared ~/.codex/skills/ since the last
-//     run — its old contents would otherwise remain visible to the codex
-//     CLI.
-//
-// Codex is the only runtime that needs this two-stage hydration because the
-// daemon sets CODEX_HOME to a per-task directory, isolating the CLI from the
-// user's real ~/.codex/. Other runtimes leave HOME untouched and discover
-// user-level skills natively (see context.go for the workdir-local paths
-// they use for workspace skills).
-func hydrateCodexSkills(codexHome string, workspaceSkills []SkillContextForEnv, disabledRuntimeSkills []RuntimeSkillRefForEnv, logger *slog.Logger) error {
-	skillsDir := filepath.Join(codexHome, "skills")
-	if err := os.RemoveAll(skillsDir); err != nil {
-		return fmt.Errorf("clear codex skills dir: %w", err)
-	}
-	if err := seedUserCodexSkills(codexHome, workspaceSkills, logger); err != nil {
-		logger.Warn("execenv: seed user codex skills failed", "error", err)
-	}
-	if len(workspaceSkills) > 0 {
-		if err := writeSkillFiles(skillsDir, workspaceSkills, nil); err != nil {
-			return err
-		}
-	}
-	return ensureCodexDisabledSkillsConfig(filepath.Join(codexHome, "config.toml"), codexHome, disabledRuntimeSkills, workspaceSkills)
 }
 
 // GCMetaKind identifies which kind of parent record a task workdir belongs to.

@@ -83,7 +83,7 @@ function makeRuntime(overrides: Partial<RuntimeDevice>): RuntimeDevice {
     daemon_id: null,
     name: "Test Runtime",
     runtime_mode: "local",
-    provider: "claude",
+    provider: "native",
     launch_header: "",
     status: "online",
     device_info: "host.local",

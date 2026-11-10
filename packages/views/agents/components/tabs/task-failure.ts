@@ -21,6 +21,7 @@ export const FAILURE_REASON_I18N_KEYS = {
   environment_prepare_failed: "environment_prepare_failed",
   invalid_task_identity: "invalid_task_identity",
   runtime_access_denied: "runtime_access_denied",
+  native_tool_outcome_unknown: "native_tool_outcome_unknown",
 
   // Agent process side — provider.
   "agent_error.provider_auth_or_access":
@@ -136,6 +137,7 @@ const CANCELLATION_FAILURE_REASONS: ReadonlySet<string> = new Set([
 // non-retryable auth, quota, config, model, CLI, and runtime-ownership
 // reasons documented in server/pkg/taskfailure.
 const ACTION_REQUIRED_FAILURE_REASONS: ReadonlySet<string> = new Set([
+  "native_tool_outcome_unknown",
   "runtime_access_denied",
   "agent_error.provider_auth_or_access",
   "agent_error.provider_quota_limit",

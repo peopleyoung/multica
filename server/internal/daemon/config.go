@@ -1,23 +1,15 @@
 package daemon
 
 import (
-	"context"
 	"fmt"
-	"log/slog"
+
 	"net/url"
 	"os"
-	"os/exec"
+
 	"path/filepath"
-	"runtime"
-	"sort"
+
 	"strings"
 	"time"
-
-	"github.com/mattn/go-shellwords"
-
-	"github.com/multica-ai/multica/server/internal/cli"
-	"github.com/multica-ai/multica/server/internal/daemon/execenv"
-	"github.com/multica-ai/multica/server/pkg/agent"
 )
 
 const (
@@ -33,17 +25,7 @@ const (
 	// (DefaultAgentIdleWatchdog), so a session that keeps emitting events is
 	// never killed merely for running long (MUL-3064). Operators who want a
 	// hard ceiling for cost/resource control can set MULTICA_AGENT_TIMEOUT.
-	DefaultAgentTimeout                   = 0
-	DefaultCodexSemanticInactivityTimeout = 10 * time.Minute
-	DefaultCodexHandshakeTimeout          = 30 * time.Second
-	DefaultCodexTurnInterruptTimeout      = 2 * time.Second
-	DefaultCodexThreadHandshakeTimeout    = 60 * time.Second
-	// DefaultOpenCodeIdleWatchdog shortens the no-message budget for OpenCode
-	// runs while they are not executing a tool. OpenCode streams text and tool
-	// events incrementally, so a completely silent interval here covers both a
-	// missing first model token and a stalled response stream. The generic
-	// AgentIdleWatchdog remains the global enable/disable switch.
-	DefaultOpenCodeIdleWatchdog = 10 * time.Minute
+	DefaultAgentTimeout = 0
 	// DefaultAgentIdleWatchdog is the per-task safety net that force-stops a
 	// run when the backend has emitted no message for this long AND its
 	// message queue is empty. Backends like Claude Code can hang indefinitely
@@ -76,9 +58,6 @@ const (
 	DefaultGCCompletedTaskTTLSelfHost     = 0                   // disabled — self-host keeps every completed env until its issue goes terminal, unless an operator opts in
 	DefaultGCOrphanTTL                    = 72 * time.Hour      // 3 days — orphans with no meta (crashes, pre-GC leftovers)
 	DefaultGCArtifactTTL                  = 12 * time.Hour      // 12h — drop regenerable artifacts once a task has been completed this long
-	DefaultGCCodexSessionTTL              = 14 * 24 * time.Hour // 14 days — reclaim per-issue Codex session stores untouched this long
-	DefaultGCHermesMemoryTTL              = 90 * 24 * time.Hour // 90 days — reclaim per-agent Hermes memory stores untouched this long (long: reclaiming these is visible amnesia, and they are a few markdown files)
-	DefaultGCHermesSessionTTL             = 14 * 24 * time.Hour // 14 days — reclaim per-conversation Hermes session stores untouched this long (matches Codex: these hold transcripts, and losing an idle one restarts the thread rather than the agent's notes)
 	DefaultGCRepoTTL                      = 30 * 24 * time.Hour // 30 days — evict a bare repo cache no task has checked out this long
 	// DefaultGCTaskTempLegacyTTL is 0 — disabled. Per-task temp dirs left by a
 	// daemon predating the temp dir execution lock carry no liveness signal at
@@ -102,70 +81,44 @@ var DefaultGCArtifactPatterns = []string{"node_modules", ".next", ".turbo"}
 
 // Config holds all daemon configuration.
 type Config struct {
-	ServerBaseURL                  string
-	DaemonID                       string
-	LegacyDaemonIDs                []string // historical daemon_ids this machine may have registered under; reported at register time so the server can merge old runtime rows
-	DeviceName                     string
-	RuntimeName                    string
-	CLIVersion                     string                // multica CLI version (e.g. "0.1.13")
-	CLICommit                      string                // full build revision embedded in the running CLI; empty/unknown if unavailable
-	LaunchedBy                     string                // "desktop" when spawned by the Electron app, empty for standalone
-	Profile                        string                // profile name (empty = default)
-	Agents                         map[string]AgentEntry // keyed by provider: claude, codebuddy, codex, copilot, opencode, codearts, deveco, openclaw, hermes, pi, cursor, kimi, reasonix, dsh, kiro, antigravity, qoder, qoderclicn, traecli, grok, qwen, qwenpaw, mcode, dim, zeroclaw (plus built-in runtime identities from agent.BuiltinRuntimes, e.g. omp)
-	WorkspacesRoot                 string                // base path for execution envs (default: ~/multica_workspaces)
-	KeepEnvAfterTask               bool                  // preserve env after task for debugging
-	HealthPort                     int                   // local HTTP port for health checks (default: 19514)
-	MaxConcurrentTasks             int                   // max tasks running in parallel (default: 20)
-	GCEnabled                      bool                  // enable periodic workspace garbage collection (default: true)
-	GCInterval                     time.Duration         // how often the GC loop runs (default: 2h)
-	GCTTL                          time.Duration         // clean dirs whose issue is done/cancelled and updated_at < now()-TTL (default: 24h)
-	GCCompletedTaskTTL             time.Duration         // fully clean inactive issue-task envs completed at least this long ago, regardless of parent issue status (default: 14d on Multica Cloud, 0/disabled elsewhere; local_directory envs are never fully removed)
-	GCOrphanTTL                    time.Duration         // clean orphan dirs with no meta, or dirs whose issue gc-check returns 404, once they exceed this age (default: 72h). The 404 path uses the same TTL — a scoped-down token can't instantly wipe live workspaces.
-	GCArtifactTTL                  time.Duration         // once a task has been completed for at least this long, drop regenerable artifacts: pattern-matched build outputs when the parent record keeps the directory (an open issue), and the exact daemon-managed Codex cache for every task kind (default: 12h, set 0 to disable both)
-	GCArtifactPatterns             []string              // basename patterns whose subtrees are removed during artifact cleanup (default: node_modules, .next, .turbo)
-	GCRepoTTL                      time.Duration         // evict a cached bare repo under .repos once no task has created a worktree from it for this long, it has no worktrees left, and it is no longer attached to any watched workspace (default: 30d, set 0 to disable)
-	GCRepoMaintenanceEnabled       bool                  // run reflog expiry and git gc after stale agent refs are removed (default: true; disable independently as an operational kill switch)
-	GCCodexSessionTTL              time.Duration         // reclaim a per-issue Codex session store (~/.codex/multica-sessions/<agent>/<issue>) untouched for at least this long, so a done/abandoned issue's conversation history does not accumulate forever (default: 14d, set 0 to disable)
-	GCHermesMemoryTTL              time.Duration         // reclaim a per-agent Hermes memory store (<profile dir>/hermes-state/<agent>/<profile>) untouched for at least this long, so a deleted agent's memory does not sit on disk forever (default: 90d, set 0 to disable)
-	GCHermesSessionTTL             time.Duration         // reclaim a per-conversation Hermes session store (<profile dir>/hermes-sessions/<agent>/<profile>/<conversation>) untouched for at least this long, so a done or abandoned conversation's transcript does not accumulate forever (default: 14d, set 0 to disable)
-	GCTaskTempLegacyTTL            time.Duration         // reclaim a per-task temp dir (<temp base>/multica-task-*) that carries no execution lock — i.e. left by a daemon predating the lock — once nothing inside it has been touched for this long. Dirs that DO carry the lock are reclaimed on liveness, never on age, so this knob does not apply to them. Neither does it reclaim a dir holding no task content — an old empty leftover, or a shell left by a daemon that died between creating the dir and publishing its lock — because holding no content is exactly what a dir currently being published looks like (default: 0, disabled — see DefaultGCTaskTempLegacyTTL)
-	AutoUpdateEnabled              bool                  // periodically check for a newer CLI release and self-update when idle (default: true on Multica Cloud, false on self-host)
-	AutoUpdateCheckInterval        time.Duration         // how often the auto-update loop polls for a new release (default: 6h)
-	AutoReloadEnabled              bool                  // restart when the multica binary on disk no longer matches the running version (default: true for CLI-launched daemons)
-	PollInterval                   time.Duration
-	WSClaimPollInterval            time.Duration // upper bound for healthy WS batch-claim safety polls; actual sleeps use downward-only jitter
-	HeartbeatInterval              time.Duration
-	AgentTimeout                   time.Duration
-	CodexSemanticInactivityTimeout time.Duration
-	// CodexFirstTurnNoProgressTimeout is an explicit override for the Codex
-	// first-turn no-progress ceiling (MULTICA_CODEX_FIRST_TURN_TIMEOUT). 0 means
-	// unset: the backend keeps its default ceiling, which CodexSemanticInactivityTimeout
-	// can only shrink. A positive value raises (or lowers) that ceiling outright,
-	// for app-servers that are legitimately slow to their first event (GH #3262).
-	CodexFirstTurnNoProgressTimeout time.Duration
-	CodexHandshakeTimeout           time.Duration
-	// CodexTurnInterruptTimeout is the bounded grace period after cancellation
-	// for app-server to acknowledge turn/interrupt and emit turn/completed.
-	// Operators can tune it with MULTICA_CODEX_TURN_INTERRUPT_TIMEOUT using the
-	// latency recorded in the Codex lifecycle logs.
-	CodexTurnInterruptTimeout   time.Duration
-	CodexThreadHandshakeTimeout time.Duration
-	OpenCodeIdleWatchdog        time.Duration // OpenCode-specific no-message window; 0 falls back to AgentIdleWatchdog and values above it cannot extend the global bound
-	AgentIdleWatchdog           time.Duration // force-stop a run when the backend goes silent this long with an empty queue (0 = disabled)
-	AgentToolWatchdog           time.Duration // force-stop a run when a single tool call stays in flight (silent) this long (0 = never force-stop during a tool call, which now also covers a live Cursor background shell); defaults to AgentIdleWatchdog, so operators tune one number unless they deliberately want a wider tool budget
-	ClaudeArgs                  []string
-	CodexArgs                   []string
-	CodebuddyArgs               []string
-	QwenArgs                    []string
-	QwenpawArgs                 []string
+	NativeRuntime            bool
+	NativeAllowWrite         bool
+	NativeAllowShell         bool
+	NativeHTTPOrigins        []string
+	ServerBaseURL            string
+	DaemonID                 string
+	LegacyDaemonIDs          []string // historical daemon_ids this machine may have registered under; reported at register time so the server can merge old runtime rows
+	DeviceName               string
+	RuntimeName              string
+	CLIVersion               string                // multica CLI version (e.g. "0.1.13")
+	CLICommit                string                // full build revision embedded in the running CLI; empty/unknown if unavailable
+	LaunchedBy               string                // "desktop" when spawned by the Electron app, empty for standalone
+	Profile                  string                // profile name (empty = default)
+	Agents                   map[string]AgentEntry // contains the native runtime descriptor
+	WorkspacesRoot           string                // base path for execution envs (default: ~/multica_workspaces)
+	KeepEnvAfterTask         bool                  // preserve env after task for debugging
+	HealthPort               int                   // local HTTP port for health checks (default: 19514)
+	MaxConcurrentTasks       int                   // max tasks running in parallel (default: 20)
+	GCEnabled                bool                  // enable periodic workspace garbage collection (default: true)
+	GCInterval               time.Duration         // how often the GC loop runs (default: 2h)
+	GCTTL                    time.Duration         // clean dirs whose issue is done/cancelled and updated_at < now()-TTL (default: 24h)
+	GCCompletedTaskTTL       time.Duration         // fully clean inactive issue-task envs completed at least this long ago, regardless of parent issue status (default: 14d on Multica Cloud, 0/disabled elsewhere; local_directory envs are never fully removed)
+	GCOrphanTTL              time.Duration         // clean orphan dirs with no meta, or dirs whose issue gc-check returns 404, once they exceed this age (default: 72h). The 404 path uses the same TTL — a scoped-down token can't instantly wipe live workspaces.
+	GCArtifactTTL            time.Duration         // once a task has been completed for at least this long, drop regenerable artifacts: pattern-matched build outputs when the parent record keeps the directory (an open issue), and the exact daemon-managed Codex cache for every task kind (default: 12h, set 0 to disable both)
+	GCArtifactPatterns       []string              // basename patterns whose subtrees are removed during artifact cleanup (default: node_modules, .next, .turbo)
+	GCRepoTTL                time.Duration         // evict a cached bare repo under .repos once no task has created a worktree from it for this long, it has no worktrees left, and it is no longer attached to any watched workspace (default: 30d, set 0 to disable)
+	GCRepoMaintenanceEnabled bool                  // run reflog expiry and git gc after stale agent refs are removed (default: true; disable independently as an operational kill switch)
+	GCTaskTempLegacyTTL      time.Duration         // reclaim a per-task temp dir (<temp base>/multica-task-*) that carries no execution lock — i.e. left by a daemon predating the lock — once nothing inside it has been touched for this long. Dirs that DO carry the lock are reclaimed on liveness, never on age, so this knob does not apply to them. Neither does it reclaim a dir holding no task content — an old empty leftover, or a shell left by a daemon that died between creating the dir and publishing its lock — because holding no content is exactly what a dir currently being published looks like (default: 0, disabled — see DefaultGCTaskTempLegacyTTL)
+	AutoUpdateEnabled        bool                  // periodically check for a newer CLI release and self-update when idle (default: true on Multica Cloud, false on self-host)
+	AutoUpdateCheckInterval  time.Duration         // how often the auto-update loop polls for a new release (default: 6h)
+	AutoReloadEnabled        bool                  // restart when the multica binary on disk no longer matches the running version (default: true for CLI-launched daemons)
+	PollInterval             time.Duration
+	WSClaimPollInterval      time.Duration // upper bound for healthy WS batch-claim safety polls; actual sleeps use downward-only jitter
+	HeartbeatInterval        time.Duration
+	AgentTimeout             time.Duration
+	AgentIdleWatchdog        time.Duration // force-stop a run when the backend goes silent this long with an empty queue (0 = disabled)
+	AgentToolWatchdog        time.Duration // force-stop a run when a single tool call stays in flight (silent) this long (0 = never force-stop during a tool call, which now also covers a live Cursor background shell); defaults to AgentIdleWatchdog, so operators tune one number unless they deliberately want a wider tool budget
 
-	// ProfileCommandOverrides maps a custom runtime profile_id -> the absolute
-	// executable path to use for that profile on THIS machine (MUL-3284).
-	// Sourced from the local CLI config (cli.CLIConfig.ProfileCommandOverrides),
-	// written by `multica runtime profile set-path`. appendProfileRuntimes
-	// prefers a matching, executable override over resolving the profile's
-	// command_name on PATH. nil/empty means "always resolve via PATH".
-	ProfileCommandOverrides map[string]string
 }
 
 // Overrides allows CLI flags to override environment variables and defaults.
@@ -178,15 +131,13 @@ type Overrides struct {
 	HeartbeatInterval   time.Duration
 	// AgentTimeout is a pointer so an explicit `--agent-timeout 0` (no cap) is
 	// distinguishable from "flag not passed". nil = use env/default.
-	AgentTimeout                   *time.Duration
-	CodexSemanticInactivityTimeout time.Duration
-	CodexHandshakeTimeout          time.Duration
-	MaxConcurrentTasks             int
-	DaemonID                       string
-	DeviceName                     string
-	RuntimeName                    string
-	Profile                        string // profile name (empty = default)
-	HealthPort                     int    // health check port (0 = use default)
+	AgentTimeout       *time.Duration
+	MaxConcurrentTasks int
+	DaemonID           string
+	DeviceName         string
+	RuntimeName        string
+	Profile            string // profile name (empty = default)
+	HealthPort         int    // health check port (0 = use default)
 	// AllowNoAgents is reserved for read-only local configuration probes. Daemon
 	// startup keeps the default false and still refuses to run with no agent CLI.
 	AllowNoAgents bool
@@ -214,82 +165,17 @@ func LoadConfig(overrides Overrides) (Config, error) {
 		return Config{}, err
 	}
 
-	// Apply backend overrides from the CLI config file (issue #3875).
-	//
-	// CLIConfig.Backends.OpenClaw lets users record "which OpenClaw on this
-	// machine, and where its state lives" in a versioned, UI-editable file
-	// instead of a launchctl env hack. We translate those fields into the
-	// same env vars the rest of LoadConfig already honors:
-	//
-	//   - MULTICA_OPENCLAW_PATH: read by probe() via envOrDefault for the
-	//     binary lookup; pre-existing path.
-	//   - OPENCLAW_STATE_DIR:    OpenClaw's own env var; the daemon already
-	//     forwards it to spawned children via mergeEnv (server/pkg/agent/...).
-	//   - MULTICA_OPENCLAW_CLI_TIMEOUT: read by execenv when it sets the
-	//     deadline on each `openclaw config ...` call during task prep.
-	//
-	// Precedence is "env wins over config wins over default" — same shape
-	// users already get with MULTICA_OPENCLAW_PATH today. We achieve it with
-	// LookupEnv guards: if the user already exported the env var (in their
-	// shell, via launchctl, or via the systemd unit), we leave it alone;
-	// otherwise we Setenv from the config file. This keeps every downstream
-	// consumer (probe, buildEnv, child processes) on the existing code path
-	// without inventing a new plumbing channel.
-	//
-	// Errors loading CLIConfig are non-fatal: a missing or malformed config
-	// file should not prevent daemon startup, since the daemon can still run
-	// purely from env-var configuration. We log a warning and proceed with
-	// no overrides.
-	var profileCommandOverrides map[string]string
-	if cliCfg, err := cli.LoadCLIConfigForProfile(overrides.Profile); err != nil {
-		slog.Warn("could not load CLI config for backend overrides; proceeding without",
-			"profile", overrides.Profile, "err", err)
-	} else {
-		if oc := openclawOverrideFrom(cliCfg); oc != nil {
-			applyOpenclawOverride(oc)
-		}
-		// Per-machine custom-runtime command path overrides (MUL-3284).
-		// Copy into our own map so later mutation of the loaded config can't
-		// alias daemon state, and so an empty map normalizes to nil.
-		if len(cliCfg.ProfileCommandOverrides) > 0 {
-			profileCommandOverrides = make(map[string]string, len(cliCfg.ProfileCommandOverrides))
-			for id, path := range cliCfg.ProfileCommandOverrides {
-				if id == "" || strings.TrimSpace(path) == "" {
-					continue
-				}
-				profileCommandOverrides[id] = path
-			}
+	for _, key := range []string{"MULTICA_NATIVE_RUNTIME", "MULTICA_NATIVE_ALLOW_WRITE", "MULTICA_NATIVE_ALLOW_SHELL"} {
+		switch strings.ToLower(strings.TrimSpace(os.Getenv(key))) {
+		case "", "false", "0", "no", "off", "true", "1", "yes", "on":
+		default:
+			return Config{}, fmt.Errorf("%s must be a boolean", key)
 		}
 	}
-
-	// Discover installed agent CLIs. Extracted so the periodic workspace sync
-	// can re-run the same discovery on a live daemon (MUL-5439).
-	agents := probeAgentCLIs()
-	if len(agents) == 0 && !overrides.AllowNoAgents {
-		return Config{}, fmt.Errorf("no agent CLI found: install claude, codebuddy, codearts, codex, copilot, opencode, deveco, openclaw, hermes, pi, omp, cursor-agent, kimi, reasonix, dsh, kiro-cli, agy, qodercli, qoderclicn, traecli, grok, qwen, qwenpaw, mcode, dim, or zeroclaw and ensure it is on PATH")
+	if !boolFromEnv("MULTICA_NATIVE_RUNTIME", true) {
+		return Config{}, fmt.Errorf("external AI runtimes have been retired; remove MULTICA_NATIVE_RUNTIME=false and migrate bindings")
 	}
-
-	claudeArgs, err := shellArgsFromEnv("MULTICA_CLAUDE_ARGS")
-	if err != nil {
-		return Config{}, err
-	}
-	codexArgs, err := shellArgsFromEnv("MULTICA_CODEX_ARGS")
-	if err != nil {
-		return Config{}, err
-	}
-	codebuddyArgs, err := shellArgsFromEnv("MULTICA_CODEBUDDY_ARGS")
-	if err != nil {
-		return Config{}, err
-	}
-	qwenArgs, err := shellArgsFromEnv("MULTICA_QWEN_ARGS")
-	if err != nil {
-		return Config{}, err
-	}
-	qwenpawArgs, err := shellArgsFromEnv("MULTICA_QWENPAW_ARGS")
-	if err != nil {
-		return Config{}, err
-	}
-
+	agents := map[string]AgentEntry{"native": {}}
 	// Host info
 	host, err := os.Hostname()
 	if err != nil || strings.TrimSpace(host) == "" {
@@ -338,16 +224,6 @@ func LoadConfig(overrides Overrides) (Config, error) {
 	if err != nil {
 		return Config{}, err
 	}
-	// MULTICA_OPENCODE_IDLE_WATCHDOG narrows the no-message window for
-	// OpenCode's streamed model responses. Zero removes the provider-specific
-	// override and falls back to MULTICA_AGENT_IDLE_WATCHDOG; positive values
-	// cannot extend the global bound, and the global zero still disables the
-	// whole mechanism.
-	openCodeIdleWatchdog, err := durationFromEnv("MULTICA_OPENCODE_IDLE_WATCHDOG", DefaultOpenCodeIdleWatchdog)
-	if err != nil {
-		return Config{}, err
-	}
-
 	// The in-flight-tool budget defaults to the idle budget: the tool window
 	// only ever existed because 30 min was too short for a real build/install/
 	// test, and now that the idle budget is sized for the longest legitimate
@@ -375,101 +251,6 @@ func LoadConfig(overrides Overrides) (Config, error) {
 	agentToolWatchdog, err := durationFromEnv("MULTICA_AGENT_TOOL_WATCHDOG", agentIdleWatchdog)
 	if err != nil {
 		return Config{}, err
-	}
-
-	// Codex runs a semantic-inactivity timer of its own inside the app-server
-	// protocol, and unlike the daemon's watchdog it is NOT tool-aware: a
-	// commandExecution that emits nothing for the whole window trips it even
-	// though a tool is plainly in flight. That one timer therefore stands in
-	// for BOTH daemon watchdogs on a Codex run, so it has to be sized like the
-	// larger of them — otherwise a quiet test suite or an output-buffering
-	// `docker build` dies at the Codex ceiling long before the daemon budget
-	// that was supposed to protect it, and "we raised the budget to 2h" is
-	// simply false for Codex users.
-	//
-	// A tool budget of 0 means "never force-stop while a tool is in flight",
-	// which this timer cannot express — it has no way to see the tool. It falls
-	// back to the idle budget rather than running unbounded, which is the
-	// conservative reading.
-	//
-	// When the whole watchdog suite is disabled (idle = 0), Codex keeps its own
-	// built-in default. Disabling the daemon's watchdogs has never disabled this
-	// timer, and quietly turning it into "unbounded" here would be a much larger
-	// change than this one.
-	codexSemanticDefault := agentIdleWatchdog
-	if agentToolWatchdog > codexSemanticDefault {
-		codexSemanticDefault = agentToolWatchdog
-	}
-	if codexSemanticDefault <= 0 {
-		codexSemanticDefault = DefaultCodexSemanticInactivityTimeout
-	}
-	codexSemanticInactivityTimeout, err := durationFromEnv("MULTICA_CODEX_SEMANTIC_INACTIVITY_TIMEOUT", codexSemanticDefault)
-	if err != nil {
-		return Config{}, err
-	}
-	if overrides.CodexSemanticInactivityTimeout > 0 {
-		codexSemanticInactivityTimeout = overrides.CodexSemanticInactivityTimeout
-	}
-
-	// 0 = unset: the codex backend keeps its default first-turn ceiling. A
-	// positive value is an explicit operator override (GH #3262 / #5959).
-	codexFirstTurnNoProgressTimeout, err := durationFromEnv("MULTICA_CODEX_FIRST_TURN_TIMEOUT", 0)
-	if err != nil {
-		return Config{}, err
-	}
-	// The first-turn override only raises the first-turn watchdog, not the
-	// concurrent semantic-inactivity timer that the same first status:running
-	// arms — and the semantic timer is armed FIRST (codex.go resets it before
-	// creating the first-turn timer). When the override is >= the semantic
-	// timeout the effective first-item wait is truncated to the semantic
-	// timeout: at equal durations the semantic deadline is reached first, and
-	// even when both fire together Go's select does not deterministically
-	// favour the first-turn branch. The failure is then classified as semantic
-	// inactivity rather than first-turn no-progress, which disables the
-	// transient model-catalog startup retry (GH #3291). Warn unless the semantic
-	// timeout is set strictly above the first-turn timeout.
-	if codexFirstTurnNoProgressTimeout > 0 {
-		effectiveSemanticTimeout := codexSemanticInactivityTimeout
-		if effectiveSemanticTimeout <= 0 {
-			effectiveSemanticTimeout = DefaultCodexSemanticInactivityTimeout
-		}
-		if codexFirstTurnNoProgressTimeout >= effectiveSemanticTimeout {
-			slog.Warn("MULTICA_CODEX_FIRST_TURN_TIMEOUT is greater than or equal to the semantic-inactivity timeout; the effective first-turn wait is truncated to the semantic timeout and the model-catalog startup retry is disabled. Because the semantic timer is armed first and equal durations do not deterministically favour the first-turn deadline, set MULTICA_CODEX_SEMANTIC_INACTIVITY_TIMEOUT strictly above MULTICA_CODEX_FIRST_TURN_TIMEOUT (with some margin) to preserve it.",
-				"first_turn_timeout", codexFirstTurnNoProgressTimeout.String(),
-				"semantic_inactivity_timeout", effectiveSemanticTimeout.String(),
-			)
-		}
-	}
-
-	codexHandshakeTimeout, err := durationFromEnv("MULTICA_CODEX_HANDSHAKE_TIMEOUT", DefaultCodexHandshakeTimeout)
-	if err != nil {
-		return Config{}, err
-	}
-	if codexHandshakeTimeout <= 0 {
-		codexHandshakeTimeout = DefaultCodexHandshakeTimeout
-	}
-	if overrides.CodexHandshakeTimeout > 0 {
-		codexHandshakeTimeout = overrides.CodexHandshakeTimeout
-	}
-	// Preserve the legacy global override semantics while giving the heavy
-	// thread RPCs a wider built-in default. The CLI resolves flag, env and
-	// persisted config values into Overrides, while embedded callers may reach
-	// LoadConfig with the environment directly.
-	codexThreadHandshakeTimeout := DefaultCodexThreadHandshakeTimeout
-	if raw, ok := os.LookupEnv("MULTICA_CODEX_HANDSHAKE_TIMEOUT"); ok && strings.TrimSpace(raw) != "" {
-		if parsed, parseErr := parseFlexDuration(strings.TrimSpace(raw)); parseErr == nil && parsed > 0 {
-			codexThreadHandshakeTimeout = codexHandshakeTimeout
-		}
-	}
-	if overrides.CodexHandshakeTimeout > 0 {
-		codexThreadHandshakeTimeout = overrides.CodexHandshakeTimeout
-	}
-	codexTurnInterruptTimeout, err := durationFromEnv("MULTICA_CODEX_TURN_INTERRUPT_TIMEOUT", DefaultCodexTurnInterruptTimeout)
-	if err != nil {
-		return Config{}, err
-	}
-	if codexTurnInterruptTimeout <= 0 {
-		codexTurnInterruptTimeout = DefaultCodexTurnInterruptTimeout
 	}
 
 	maxConcurrentTasks, err := intFromEnv("MULTICA_DAEMON_MAX_CONCURRENT_TASKS", DefaultMaxConcurrentTasks)
@@ -568,19 +349,7 @@ func LoadConfig(overrides Overrides) (Config, error) {
 	if err != nil {
 		return Config{}, err
 	}
-	gcCodexSessionTTL, err := durationFromEnv("MULTICA_GC_CODEX_SESSION_TTL", DefaultGCCodexSessionTTL)
-	if err != nil {
-		return Config{}, err
-	}
 	gcTaskTempLegacyTTL, err := durationFromEnv("MULTICA_GC_TASK_TEMP_LEGACY_TTL", DefaultGCTaskTempLegacyTTL)
-	if err != nil {
-		return Config{}, err
-	}
-	gcHermesMemoryTTL, err := durationFromEnv("MULTICA_GC_HERMES_MEMORY_TTL", DefaultGCHermesMemoryTTL)
-	if err != nil {
-		return Config{}, err
-	}
-	gcHermesSessionTTL, err := durationFromEnv("MULTICA_GC_HERMES_SESSION_TTL", DefaultGCHermesSessionTTL)
 	if err != nil {
 		return Config{}, err
 	}
@@ -624,51 +393,40 @@ func LoadConfig(overrides Overrides) (Config, error) {
 	}
 
 	return Config{
-		ServerBaseURL:                   serverBaseURL,
-		DaemonID:                        daemonID,
-		LegacyDaemonIDs:                 legacyDaemonIDs,
-		DeviceName:                      deviceName,
-		RuntimeName:                     runtimeName,
-		Profile:                         profile,
-		Agents:                          agents,
-		WorkspacesRoot:                  workspacesRoot,
-		KeepEnvAfterTask:                keepEnv,
-		GCEnabled:                       gcEnabled,
-		GCInterval:                      gcInterval,
-		GCTTL:                           gcTTL,
-		GCCompletedTaskTTL:              gcCompletedTaskTTL,
-		GCOrphanTTL:                     gcOrphanTTL,
-		GCArtifactTTL:                   gcArtifactTTL,
-		GCArtifactPatterns:              gcArtifactPatterns,
-		GCRepoTTL:                       gcRepoTTL,
-		GCRepoMaintenanceEnabled:        gcRepoMaintenanceEnabled,
-		GCCodexSessionTTL:               gcCodexSessionTTL,
-		GCHermesMemoryTTL:               gcHermesMemoryTTL,
-		GCHermesSessionTTL:              gcHermesSessionTTL,
-		GCTaskTempLegacyTTL:             gcTaskTempLegacyTTL,
-		AutoUpdateEnabled:               autoUpdateEnabled,
-		AutoUpdateCheckInterval:         autoUpdateInterval,
-		AutoReloadEnabled:               autoReloadEnabled,
-		HealthPort:                      healthPort,
-		MaxConcurrentTasks:              maxConcurrentTasks,
-		PollInterval:                    pollInterval,
-		WSClaimPollInterval:             wsClaimPollInterval,
-		HeartbeatInterval:               heartbeatInterval,
-		AgentTimeout:                    agentTimeout,
-		CodexSemanticInactivityTimeout:  codexSemanticInactivityTimeout,
-		CodexFirstTurnNoProgressTimeout: codexFirstTurnNoProgressTimeout,
-		CodexHandshakeTimeout:           codexHandshakeTimeout,
-		CodexTurnInterruptTimeout:       codexTurnInterruptTimeout,
-		CodexThreadHandshakeTimeout:     codexThreadHandshakeTimeout,
-		OpenCodeIdleWatchdog:            openCodeIdleWatchdog,
-		AgentIdleWatchdog:               agentIdleWatchdog,
-		AgentToolWatchdog:               agentToolWatchdog,
-		ClaudeArgs:                      claudeArgs,
-		CodexArgs:                       codexArgs,
-		CodebuddyArgs:                   codebuddyArgs,
-		QwenArgs:                        qwenArgs,
-		QwenpawArgs:                     qwenpawArgs,
-		ProfileCommandOverrides:         profileCommandOverrides,
+		ServerBaseURL:            serverBaseURL,
+		DaemonID:                 daemonID,
+		LegacyDaemonIDs:          legacyDaemonIDs,
+		DeviceName:               deviceName,
+		RuntimeName:              runtimeName,
+		Profile:                  profile,
+		Agents:                   agents,
+		NativeRuntime:            true,
+		NativeAllowWrite:         boolFromEnv("MULTICA_NATIVE_ALLOW_WRITE", false),
+		NativeAllowShell:         boolFromEnv("MULTICA_NATIVE_ALLOW_SHELL", false),
+		NativeHTTPOrigins:        strings.FieldsFunc(os.Getenv("MULTICA_NATIVE_HTTP_ORIGINS"), func(r rune) bool { return r == ',' }),
+		WorkspacesRoot:           workspacesRoot,
+		KeepEnvAfterTask:         keepEnv,
+		GCEnabled:                gcEnabled,
+		GCInterval:               gcInterval,
+		GCTTL:                    gcTTL,
+		GCCompletedTaskTTL:       gcCompletedTaskTTL,
+		GCOrphanTTL:              gcOrphanTTL,
+		GCArtifactTTL:            gcArtifactTTL,
+		GCArtifactPatterns:       gcArtifactPatterns,
+		GCRepoTTL:                gcRepoTTL,
+		GCRepoMaintenanceEnabled: gcRepoMaintenanceEnabled,
+		GCTaskTempLegacyTTL:      gcTaskTempLegacyTTL,
+		AutoUpdateEnabled:        autoUpdateEnabled,
+		AutoUpdateCheckInterval:  autoUpdateInterval,
+		AutoReloadEnabled:        autoReloadEnabled,
+		HealthPort:               healthPort,
+		MaxConcurrentTasks:       maxConcurrentTasks,
+		PollInterval:             pollInterval,
+		WSClaimPollInterval:      wsClaimPollInterval,
+		HeartbeatInterval:        heartbeatInterval,
+		AgentTimeout:             agentTimeout,
+		AgentIdleWatchdog:        agentIdleWatchdog,
+		AgentToolWatchdog:        agentToolWatchdog,
 	}, nil
 }
 
@@ -809,704 +567,13 @@ func patternsFromEnv(name string, defaults []string) []string {
 	return out
 }
 
-func shellArgsFromEnv(name string) ([]string, error) {
-	raw := strings.TrimSpace(os.Getenv(name))
-	if raw == "" {
-		return nil, nil
-	}
-	args, err := shellwords.Parse(raw)
-	if err != nil {
-		return nil, fmt.Errorf("invalid %s: %w", name, err)
-	}
-	return args, nil
-}
-
-// resolveAgentExecutablePath returns the executable entry point the daemon
-// should keep for an agent command. Bare command names are pinned to the path
-// resolved during startup so later PATH changes cannot redirect task launches.
-// Ordinary executables are pinned to their concrete target; entrypoints owned
-// by a name-dispatching shim keep the command name the manager needs to select
-// the right package (see discoveredExecutablePath).
-// On Windows this deliberately keeps the stable discovered junction path;
-// resolveAgentEntryWithHeal follows it for each launch so installer upgrades
-// that retarget a still-live junction take effect without a daemon restart.
-// When ~/.multica/hooks shadows a real agent binary, skip that hooks directory:
-// previously generated hook wrappers can execute the same command name and
-// recurse forever if the daemon records or launches the wrapper.
-func resolveAgentExecutablePath(cmd string) (string, error) {
-	resolved, err := exec.LookPath(cmd)
-	if err != nil {
-		return "", err
-	}
-	if strings.ContainsAny(cmd, "/\\") {
-		return canonicalConfiguredExecutablePath(resolved), nil
-	}
-	if isInMulticaHooksDir(resolved) {
-		if unshadowed, err := lookPathExcludingMulticaHooks(cmd); err == nil {
-			return unshadowed, nil
-		}
-	}
-	return discoveredExecutablePath(resolved), nil
-}
-
-// agentExecutablePresent reports whether path currently resolves to a runnable
-// executable, using the exact check the agent backends apply at launch
-// (exec.LookPath). A pinned AgentEntry.Path that fails this has vanished from
-// disk — typically because a version manager did an in-place upgrade and
-// deleted the old versioned directory the path pointed into (MUL-4486).
-func agentExecutablePresent(path string) bool {
-	if path == "" {
-		return false
-	}
-	_, err := exec.LookPath(path)
-	return err == nil
-}
-
-// reresolveAgentCommand re-runs the startup resolution for a single agent
-// command name, returning the freshly resolved absolute path. It mirrors the
-// probe() order in LoadConfig: exec.LookPath (with the ~/.multica/hooks
-// exclusion preserved via resolveAgentExecutablePath) first, then the login
-// shell fallback for a bare command name a GUI-launched daemon can't see on
-// its own PATH. It is only called on the miss path — when a previously pinned
-// path has disappeared — so the login-shell cost is paid rarely, never on a
-// normal launch.
-func reresolveAgentCommand(cmd string) (string, bool) {
-	if cmd == "" {
-		return "", false
-	}
-	if path, err := resolveAgentExecutablePath(cmd); err == nil {
-		return path, true
-	}
-	// A bare command name the daemon's own PATH can't see: retry via the
-	// user's login shell, exactly as the startup probe does for
-	// fnm/nvm/native-installer prefixes. Absolute/relative overrides skip
-	// this — an operator-pinned MULTICA_*_PATH that no longer exists should
-	// stay a hard miss rather than silently resolve a different binary.
-	if !strings.ContainsAny(cmd, "/\\") {
-		if path, ok := resolveAgentsViaLoginShell([]string{cmd})[cmd]; ok {
-			return path, true
-		}
-	}
-	return "", false
-}
-
-func lookPathExcludingMulticaHooks(cmd string) (string, error) {
-	for _, dir := range filepath.SplitList(os.Getenv("PATH")) {
-		if dir == "" {
-			dir = "."
-		}
-		if isMulticaHooksDir(dir) {
-			continue
-		}
-		candidate := filepath.Join(dir, cmd)
-		if isExecutableFile(candidate) {
-			return discoveredExecutablePath(candidate), nil
-		}
-	}
-	return "", exec.ErrNotFound
-}
-
-func isInMulticaHooksDir(path string) bool {
-	if path == "" {
-		return false
-	}
-	return isMulticaHooksDir(filepath.Dir(path))
-}
-
-func isMulticaHooksDir(dir string) bool {
-	home, err := os.UserHomeDir()
-	if err != nil || home == "" {
-		return false
-	}
-	return samePathDir(dir, filepath.Join(home, ".multica", "hooks"))
-}
-
-func samePathDir(a, b string) bool {
-	absA, err := filepath.Abs(a)
-	if err != nil {
-		return false
-	}
-	absB, err := filepath.Abs(b)
-	if err != nil {
-		return false
-	}
-	absA = filepath.Clean(absA)
-	absB = filepath.Clean(absB)
-	if realA, err := filepath.EvalSymlinks(absA); err == nil {
-		absA = realA
-	}
-	if realB, err := filepath.EvalSymlinks(absB); err == nil {
-		absB = realB
-	}
-	return absA == absB
-}
-
+// canonicalExecutablePath resolves the daemon binary identity for self-reload.
 func canonicalExecutablePath(path string) string {
-	abs, err := filepath.Abs(path)
-	if err != nil {
-		slog.Debug("make agent executable path absolute failed; keeping configured path", "path", path, "error", err)
-		return path
+	if resolved, err := filepath.EvalSymlinks(path); err == nil {
+		path = resolved
 	}
-	if real, err := canonicalPath(abs); err == nil {
-		return real
-	} else {
-		slog.Debug("canonicalize agent executable path failed; keeping absolute path", "path", abs, "error", err)
+	if absolute, err := filepath.Abs(path); err == nil {
+		path = absolute
 	}
-	return abs
-}
-
-func isExecutableFile(path string) bool {
-	info, err := os.Stat(path)
-	if err != nil || info.IsDir() {
-		return false
-	}
-	return info.Mode()&0o111 != 0
-}
-
-// defaultAgentCommandNames lists the command names the agent probe loop tries
-// before any MULTICA_*_PATH override is applied. Kept in sync with the
-// `probe(...)` calls in LoadConfig — the shell-fallback resolver uses this
-// list to pre-fetch canonical paths for every known agent in a single shell
-// invocation, instead of paying the cost-per-miss.
-//
-// Built-in runtime identity commands (e.g. "omp") are appended from the
-// descriptor registry (agent.BuiltinRuntimeCommands) so adding a new fork
-// doesn't require editing this list by hand.
-var defaultAgentCommandNames = append([]string{
-	"claude", "codex", "opencode", "codearts", "deveco", "openclaw", "hermes",
-	"pi", "cursor-agent", "copilot", "kimi", "reasonix", "dsh", "kiro-cli", "codebuddy", "agy", "qodercli", "qoderclicn", "traecli", "grok", "qwen", "qwenpaw", "mcode", "dim", "zeroclaw",
-}, agent.BuiltinRuntimeCommands()...)
-
-// codexDesktopAppBundlePaths returns candidate macOS app-bundle locations for
-// the bundled Codex CLI. OpenAI relocated the Desktop app from Codex.app to
-// ChatGPT.app (#5205), then nested the CLI under Resources/codex-cli/bin
-// (#8941). Candidates are ordered by install location first (system
-// /Applications before user ~/Applications). Within each location the current
-// ChatGPT.app nested path is tried before the flat Resources/codex path, which
-// is tried before the legacy Codex.app path, so the newest install wins while
-// older installs still resolve.
-var codexDesktopAppBundlePaths = func() []string {
-	paths := []string{
-		"/Applications/ChatGPT.app/Contents/Resources/codex-cli/bin/codex",
-		"/Applications/ChatGPT.app/Contents/Resources/codex",
-		"/Applications/Codex.app/Contents/Resources/codex",
-	}
-	if home, err := os.UserHomeDir(); err == nil {
-		paths = append(paths,
-			filepath.Join(home, "Applications", "ChatGPT.app", "Contents", "Resources", "codex-cli", "bin", "codex"),
-			filepath.Join(home, "Applications", "ChatGPT.app", "Contents", "Resources", "codex"),
-			filepath.Join(home, "Applications", "Codex.app", "Contents", "Resources", "codex"),
-		)
-	}
-	return paths
-}
-
-// dshDesktopAppBundlePaths returns candidate locations for the DSH CLI that
-// DeepSeek Harness Desktop manages. The app never installs `dsh` onto PATH, so
-// a GUI-launched daemon misses it on exec.LookPath and the login-shell fallback
-// cannot rescue it either — a user's rc files have no reason to know that path.
-//
-// Only DEFAULT locations are covered, and nothing here reads an install receipt
-// or the registry, so an install put somewhere else still needs
-// MULTICA_DSH_PATH. This is a convenience for the common case, never a contract
-// — which is why a miss falls through to "dsh not found" rather than to a guess.
-var dshDesktopAppBundlePaths = func() []string {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		home = ""
-	}
-	return dshDesktopBundlePathsFor(runtime.GOOS, os.Getenv, home)
-}
-
-// dshDesktopBundlePathsFor builds the candidate list for one platform.
-//
-// Taking goos/env/home as arguments, rather than reading runtime.GOOS and
-// os.Getenv inline, is what makes the Windows layout assertable from any host.
-// The alternative leaves the Windows branch testable only on Windows, which in
-// this package has meant untested.
-//
-// Generated shims come first on BOTH platforms, and that order is the point: a
-// shim runs the Desktop app's own Electron binary as node, by absolute path, so
-// it needs nothing on PATH. The macOS app-bundle script below is the same CLI
-// entered through `#!/usr/bin/env node`, so it only works on a machine that
-// happens to have node installed — a last resort, not a first choice.
-func dshDesktopBundlePathsFor(goos string, env func(string) string, home string) []string {
-	paths := dshDesktopShimCandidates(dshDesktopAppDataDir(goos, env, home), dshDesktopShimNames(goos))
-	if goos == "darwin" {
-		// The CLI entry point inside the app bundle, tried last. System-wide
-		// /Applications before the per-user ~/Applications, matching
-		// codexDesktopAppBundlePaths.
-		const bundle = "DSH Desktop.app/Contents/Resources/app.asar.unpacked/node_modules/@deepseek-ai/dsh/lib/bin.js"
-		paths = append(paths, filepath.Join("/Applications", bundle))
-		if home != "" {
-			paths = append(paths, filepath.Join(home, "Applications", bundle))
-		}
-	}
-	return paths
-}
-
-// dshDesktopAppDataDir returns the per-user directory DSH Desktop keeps its
-// state in, which is also where it generates the CLI shims.
-//
-// Roaming application data on Windows, NOT the install directory: the app
-// installs to Program Files or %LOCALAPPDATA%\Programs, but the CLI it drives
-// lives beside its other per-user state. That also makes one lookup cover both
-// install modes, since a per-machine install still generates these shims into
-// each user's own roaming directory.
-//
-// %APPDATA% is preferred over composing from home because it is redirected on
-// managed and roaming-profile machines; the home-relative form is the last
-// resort for a daemon started with a stripped environment.
-func dshDesktopAppDataDir(goos string, env func(string) string, home string) string {
-	const app = "DSH Desktop"
-	switch goos {
-	case "darwin":
-		if home == "" {
-			return ""
-		}
-		return filepath.Join(home, "Library", "Application Support", app)
-	case "windows":
-		if appData := strings.TrimSpace(env("APPDATA")); appData != "" {
-			return filepath.Join(appData, app)
-		}
-		if home != "" {
-			return filepath.Join(home, "AppData", "Roaming", app)
-		}
-	}
-	return ""
-}
-
-// dshDesktopShimNames are the launchable file names a generated shim directory
-// can hold, most likely first.
-//
-// The macOS app-bundle entry point — lib/bin.js — deliberately has no Windows
-// counterpart. It is a Node script macOS starts through its shebang; Windows
-// has no shebang, exec.LookPath rejects a .js unless PATHEXT says otherwise,
-// and CreateProcess cannot start one either. Listing it there would register a
-// runtime that fails on every spawn, which is the failure executableCandidate
-// exists to prevent.
-func dshDesktopShimNames(goos string) []string {
-	if goos == "windows" {
-		return []string{"dsh.exe", "dsh.cmd", "dsh.bat"}
-	}
-	return []string{"dsh"}
-}
-
-// dshDesktopShimTiers are the directories under the app-data root whose
-// subdirectories are generated CLI payloads, in preference order.
-//
-// host-commands wins because that is the layout whose shim was confirmed to
-// run: it sets DSH_HOME and invokes the Desktop executable by absolute path.
-// The cli payload is the other shape, kept as a fallback for a Desktop version
-// that does not generate host-commands — on at least one Windows install its
-// shim exits 9009 (cmd.exe's "command not found") because what it forwards to
-// is not there. Ranking it second is what stops a broken-but-present shim being
-// chosen over a working one; nothing here executes a candidate, so order is the
-// only lever available.
-//
-// profiled marks the tier that keys its payloads by DSH profile
-// (host-commands/<profile>/generations). The profile set is the user's, so that
-// level is enumerated rather than assumed.
-var dshDesktopShimTiers = []struct {
-	dir      string
-	profiled bool
-}{
-	{dir: "host-commands", profiled: true},
-	{dir: "cli"},
-}
-
-// dshBinDir is one generated command directory plus the keys that order it.
-type dshBinDir struct {
-	path    string
-	name    string
-	modTime time.Time
-}
-
-// dshDesktopBinDirsIn collects the bin directories under root, unsorted.
-//
-// DSH Desktop lays its generated command directories out in two shapes, and a
-// host can be on either depending on which version generated them:
-//
-//	<root>/bin            — flat
-//	<root>/<id>/bin       — one payload directory per generation
-//
-// The payload id is a content hash, sometimes with a generation uuid appended,
-// so it is enumerated rather than composed. Only directories holding a bin are
-// accepted, so a stray file or a half-extracted download is skipped rather than
-// turned into a candidate.
-//
-// The flat directory carries a zero timestamp, which sorts it last: a host that
-// has both shapes is one where the generational layout is the newer of the two.
-func dshDesktopBinDirsIn(root string) []dshBinDir {
-	if root == "" {
-		return nil
-	}
-	var dirs []dshBinDir
-	if entries, err := os.ReadDir(root); err == nil {
-		for _, entry := range entries {
-			if !entry.IsDir() || entry.Name() == "bin" {
-				continue
-			}
-			binDir := filepath.Join(root, entry.Name(), "bin")
-			if !isExistingDir(binDir) {
-				continue
-			}
-			info, err := entry.Info()
-			if err != nil {
-				continue
-			}
-			dirs = append(dirs, dshBinDir{path: binDir, name: entry.Name(), modTime: info.ModTime()})
-		}
-	}
-	if flat := filepath.Join(root, "bin"); isExistingDir(flat) {
-		dirs = append(dirs, dshBinDir{path: flat, name: ""})
-	}
-	return dirs
-}
-
-// sortDshBinDirs orders generated directories newest first.
-//
-// This is what protects a host mid-upgrade: a new payload is written and the
-// previous one can be left in place, and the newest is the one the app is
-// actually driving. The name breaks ties, because two payloads written in the
-// same filesystem timestamp tick must still produce one stable answer rather
-// than whatever ReadDir returned — and because the answer feeds PATH and
-// process launches, an order that changes between rounds is a daemon that picks
-// a different CLI each time.
-func sortDshBinDirs(dirs []dshBinDir) {
-	sort.SliceStable(dirs, func(i, j int) bool {
-		if !dirs[i].modTime.Equal(dirs[j].modTime) {
-			return dirs[i].modTime.After(dirs[j].modTime)
-		}
-		return dirs[i].name > dirs[j].name
-	})
-}
-
-// dshDesktopBinDirs returns the bin directories under root, newest first.
-func dshDesktopBinDirs(root string) []string {
-	dirs := dshDesktopBinDirsIn(root)
-	sortDshBinDirs(dirs)
-	paths := make([]string, 0, len(dirs))
-	for _, dir := range dirs {
-		paths = append(paths, dir.path)
-	}
-	return paths
-}
-
-// isExistingDir reports whether path is a directory that exists.
-func isExistingDir(path string) bool {
-	info, err := os.Stat(path)
-	return err == nil && info.IsDir()
-}
-
-// dshDesktopShimCandidates expands the generated CLI payloads under appData
-// into launchable candidate paths.
-//
-// Tier order is applied first and payload age second, so a working shim in the
-// preferred tier always outranks a newer one in the fallback tier. Within a
-// tier every root is pooled before sorting, so the newest generation wins even
-// when it belongs to a different DSH profile than the one ReadDir happened to
-// return first.
-func dshDesktopShimCandidates(appData string, names []string) []string {
-	if appData == "" || len(names) == 0 {
-		return nil
-	}
-	var paths []string
-	for _, spec := range dshDesktopShimTiers {
-		var tierDirs []dshBinDir
-		for _, root := range dshDesktopPayloadRoots(filepath.Join(appData, spec.dir), spec.profiled) {
-			tierDirs = append(tierDirs, dshDesktopBinDirsIn(root)...)
-		}
-		sortDshBinDirs(tierDirs)
-		for _, dir := range tierDirs {
-			for _, name := range names {
-				paths = append(paths, filepath.Join(dir.path, name))
-			}
-		}
-	}
-	return paths
-}
-
-// dshDesktopPayloadRoots resolves one tier to the directories whose contents
-// dshDesktopBinDirsIn enumerates.
-//
-// A profiled tier keys its payloads by DSH profile and puts them under a
-// `generations` directory (host-commands/<profile>/generations). The profile
-// names belong to the user, so that level is enumerated; an unprofiled tier
-// holds its payloads directly.
-func dshDesktopPayloadRoots(dir string, profiled bool) []string {
-	if !profiled {
-		return []string{dir}
-	}
-	entries, err := os.ReadDir(dir)
-	if err != nil {
-		return nil
-	}
-	var roots []string
-	for _, entry := range entries {
-		if !entry.IsDir() {
-			continue
-		}
-		generations := filepath.Join(dir, entry.Name(), "generations")
-		if isExistingDir(generations) {
-			roots = append(roots, generations)
-		}
-	}
-	return roots
-}
-
-// loginShellResolveTimeout caps how long the daemon will wait for the user's
-// login shell to print canonical agent paths. A broken rc file should not
-// block startup — if the shell takes longer than this, we proceed without
-// shell-resolved fallbacks and the daemon falls back to the same behaviour
-// it had before this code was added.
-const loginShellResolveTimeout = 3 * time.Second
-
-// loginShellResolveWaitDelay is the hard cap that runs *after*
-// loginShellResolveTimeout has elapsed and `CommandContext` has signalled the
-// shell to exit. The context kills the shell process itself, but rc files in
-// the wild routinely background things that inherit stdout (`nvm` shims,
-// `direnv hook`, `eval $(starship init)`, plain `&`). Those survivors keep
-// the stdout pipe open and `cmd.Output()` will block on EOF for as long as
-// they live. Cmd.WaitDelay (Go 1.20+) forcibly closes the pipes and returns
-// once this delay elapses, so the total daemon-startup penalty caused by a
-// pathological rc file is bounded by `timeout + waitDelay`, not by however
-// long the user's background processes happen to run.
-//
-// A var so tests can prove the ceiling holds without waiting it out.
-var loginShellResolveWaitDelay = 2 * time.Second
-
-// supportedLoginShells limits which interpreters we will invoke via
-// `<shell> -ilc <script>`. Sticking to POSIX-compatible shells means the
-// resolver script below works unchanged. Notably absent: fish (uses
-// `command -s` and a different syntax for command substitution).
-var supportedLoginShells = map[string]struct{}{
-	"bash": {},
-	"zsh":  {},
-	"sh":   {},
-	"dash": {},
-	"ksh":  {},
-}
-
-// resolveAgentsViaLoginShell asks the user's login shell to print an absolute,
-// invocation-safe path to each name in `names`. It returns a map
-// of name → path for whatever the shell could find, and an empty map if the
-// shell is unavailable / unsupported / times out / produces no usable output.
-//
-// Why we need this:
-//
-// Daemon-style processes on macOS/Linux do not inherit the user's interactive
-// PATH. `claude --version` working in Terminal.app is no guarantee that
-// exec.LookPath("claude") will work from a binary spawned by Launchpad, the
-// Electron app, or `launchctl`. The most common offenders are fnm/nvm/volta
-// "multishell" prefix dirs (per-shell, ephemeral) and the Anthropic native
-// installer (`~/.claude/local/`) — both leave their binaries on a path that
-// only `.zshrc` knows about.
-//
-// Implementation notes:
-//
-//   - We invoke `$SHELL -ilc <script>` with both -i (interactive) and -l
-//     (login) so we pick up PATH set in either ~/.zshrc / ~/.bashrc OR
-//     ~/.zprofile / ~/.bash_profile. Real users put it in both places.
-//   - The script resolves symlinks via `cd "$dirname" && pwd -P` while the
-//     spawned shell is still alive. fnm/nvm "multishell" directories vanish
-//     on shell exit, so the canonical path must be captured before stdout is
-//     returned to Go — by then the original path is already gone.
-//   - We only trust outputs that look like an absolute path AND still pass a
-//     fresh exec.LookPath check from the daemon's vantage point. That filters
-//     out aliases (`command -v` prints the alias definition for those, not a
-//     path) and per-shell paths the shell happened not to fully canonicalise.
-//   - Agent names are restricted to the bare set in defaultAgentCommandNames
-//     (`[A-Za-z0-9._-]` only); we inline them into the script unquoted to
-//     keep the script readable. Custom MULTICA_*_PATH values never reach this
-//     resolver — those go through exec.LookPath directly.
-//
-// A var so tests can stub the fork without a real login shell.
-var resolveAgentsViaLoginShell = func(names []string) map[string]string {
-	out := map[string]string{}
-	if len(names) == 0 {
-		return out
-	}
-	shell := strings.TrimSpace(os.Getenv("SHELL"))
-	if shell == "" {
-		return out
-	}
-	if _, ok := supportedLoginShells[filepath.Base(shell)]; !ok {
-		return out
-	}
-
-	safe := make([]string, 0, len(names))
-	for _, n := range names {
-		if isSafeAgentName(n) {
-			safe = append(safe, n)
-		}
-	}
-	if len(safe) == 0 {
-		return out
-	}
-
-	ctx, cancel := context.WithTimeout(context.Background(), loginShellResolveTimeout)
-	defer cancel()
-
-	cmd := exec.CommandContext(ctx, shell, "-ilc", buildLoginShellResolveScript(safe))
-	cmd.WaitDelay = loginShellResolveWaitDelay
-	raw, err := cmd.Output()
-	if err != nil {
-		return out
-	}
-
-	for _, line := range strings.Split(strings.TrimSpace(string(raw)), "\n") {
-		parts := strings.SplitN(line, "\t", 2)
-		if len(parts) != 2 {
-			continue
-		}
-		name, path := parts[0], strings.TrimSpace(parts[1])
-		if !filepath.IsAbs(path) {
-			continue
-		}
-		// Final reality check: the path the shell gave us must still be
-		// executable from the daemon's perspective right now. fnm
-		// multishells are the motivating example — pwd -P inside the
-		// helper shell can fail to break out of the per-session bin dir,
-		// and we'd rather report "not found" than hand back a path that
-		// vanishes between detection and execution.
-		if _, err := exec.LookPath(path); err != nil {
-			continue
-		}
-		out[name] = path
-	}
-	return out
-}
-
-// buildLoginShellResolveScript returns the shell script that resolveAgentsViaLoginShell
-// runs inside `$SHELL -ilc`. The script:
-//
-//  1. iterates the provided command names,
-//  2. strips any locally-defined alias and shell function with that name so
-//     `command -v` reaches through to a real binary on PATH (see below),
-//  3. uses POSIX `command -v` to find each one on the interactive PATH,
-//  4. rejects results that are not absolute paths (defence in depth — if the
-//     unalias/unset -f pair somehow didn't take effect, `command -v` would
-//     still print the alias/function definition, and we'd rather drop it
-//     than hand back garbage),
-//  5. canonicalises the directory via `cd ... && pwd -P` so symlinked prefix
-//     dirs (fnm/nvm/volta) collapse to stable paths while the invoked command
-//     name is kept,
-//  6. if the resolved path lives in ~/.multica/hooks, searches the same
-//     shell-expanded PATH for the first executable outside that hooks dir,
-//  7. prints `<name>\t<canonical_path>` one entry per line for the caller.
-//
-// Why steps 2 is important — and why this PR's first revision missed #2512:
-// the motivating case has `alias claude=...` in ~/.zshrc *and* fnm's real
-// claude binary further down on PATH. With `-i` set, the alias loads, and
-// `command -v claude` returns `claude: aliased to ...` (zsh) or `alias
-// claude='...'` (bash) — neither starts with `/`, so step 4 drops them, and
-// the loop never looks at PATH again. Unaliasing inside the same shell makes
-// `command -v` fall back to the PATH search the daemon actually wants.
-// Shell functions exhibit the same shadowing in bash/zsh, hence `unset -f`.
-// Both calls are wrapped in `2>/dev/null` so the harmless "no such alias"
-// error never reaches stderr.
-//
-// All input names are vetted by isSafeAgentName before they reach this
-// function, so inlining them unquoted into the for-loop word list is safe.
-func buildLoginShellResolveScript(names []string) string {
-	var b strings.Builder
-	b.WriteString("for n in")
-	for _, n := range names {
-		b.WriteByte(' ')
-		b.WriteString(n)
-	}
-	b.WriteString("; do\n")
-	b.WriteString("  unalias \"$n\" 2>/dev/null\n")
-	b.WriteString("  unset -f \"$n\" 2>/dev/null\n")
-	b.WriteString("  p=$(command -v \"$n\" 2>/dev/null) || continue\n")
-	b.WriteString("  [ -n \"$p\" ] || continue\n")
-	b.WriteString("  case \"$p\" in /*) ;; *) continue ;; esac\n")
-	b.WriteString("  d=$(dirname \"$p\") && f=$(basename \"$p\") && c=$(cd \"$d\" 2>/dev/null && pwd -P) || continue\n")
-	b.WriteString("  hc=\"\"\n")
-	b.WriteString("  if [ -n \"${HOME:-}\" ]; then hd=\"$HOME/.multica/hooks\"; hc=$(cd \"$hd\" 2>/dev/null && pwd -P) || hc=\"\"; fi\n")
-	b.WriteString("  if [ -n \"$hc\" ] && [ \"$c\" = \"$hc\" ]; then\n")
-	b.WriteString("    oldIFS=$IFS; IFS=:\n")
-	b.WriteString("    for d2 in $PATH; do\n")
-	b.WriteString("      [ -n \"$d2\" ] || d2=.\n")
-	b.WriteString("      c2=$(cd \"$d2\" 2>/dev/null && pwd -P) || continue\n")
-	b.WriteString("      [ \"$c2\" = \"$hc\" ] && continue\n")
-	b.WriteString("      if [ -f \"$c2/$n\" ] && [ -x \"$c2/$n\" ]; then c=\"$c2\"; f=\"$n\"; break; fi\n")
-	b.WriteString("    done\n")
-	b.WriteString("    IFS=$oldIFS\n")
-	b.WriteString("  fi\n")
-	b.WriteString("  printf '%s\\t%s\\n' \"$n\" \"$c/$f\"\n")
-	b.WriteString("done\n")
-	return b.String()
-}
-
-// isSafeAgentName checks that `s` is a bare command name composed only of
-// characters that are safe to inline into a shell script (ASCII letters,
-// digits, dot, dash, underscore). The agent names this daemon ships with all
-// satisfy the predicate; it exists to guard against future drift, not to
-// constrain operator-supplied paths (those never reach the shell resolver).
-func isSafeAgentName(s string) bool {
-	if s == "" {
-		return false
-	}
-	for _, r := range s {
-		switch {
-		case r >= 'a' && r <= 'z':
-		case r >= 'A' && r <= 'Z':
-		case r >= '0' && r <= '9':
-		case r == '-' || r == '_' || r == '.':
-		default:
-			return false
-		}
-	}
-	return true
-}
-
-// openclawOverrideFrom returns the OpenClaw override block from a loaded
-// CLIConfig, or nil when no override is configured. Centralized here so
-// the LoadConfig path and tests share one navigation predicate over the
-// nullable-pointer chain.
-func openclawOverrideFrom(cfg cli.CLIConfig) *cli.OpenClawOverride {
-	if cfg.Backends == nil {
-		return nil
-	}
-	return cfg.Backends.OpenClaw
-}
-
-// applyOpenclawOverride translates the config-file overrides into process
-// env vars, which the existing probe() / buildEnv code paths already honor.
-// Env-set-by-user wins over config-set-by-file: we only Setenv when the var
-// is not already present, preserving the back-compat contract documented
-// on cli.OpenClawOverride.
-//
-// Side-effecting on os.Setenv is intentional and scoped:
-//
-//   - The three vars touched (MULTICA_OPENCLAW_PATH, OPENCLAW_STATE_DIR,
-//     MULTICA_OPENCLAW_CLI_TIMEOUT) are
-//     OpenClaw-specific. Other backends do not read them; setting them in the
-//     daemon process has no observable effect on, e.g., Claude Code or Codex
-//     spawn behavior.
-//   - LoadConfig runs once during daemon startup, before any backend Execute.
-//     Concurrent reads of os.Environ() in spawned children see a stable view.
-//   - We deliberately do not unset on later reload: the daemon's lifecycle is
-//     "exit and respawn" (cmd_daemon.go), not in-process reconfigure.
-func applyOpenclawOverride(oc *cli.OpenClawOverride) {
-	if oc == nil {
-		return
-	}
-	if oc.BinaryPath != "" {
-		if _, set := os.LookupEnv("MULTICA_OPENCLAW_PATH"); !set {
-			_ = os.Setenv("MULTICA_OPENCLAW_PATH", oc.BinaryPath)
-		}
-	}
-	if oc.StateDir != "" {
-		if _, set := os.LookupEnv("OPENCLAW_STATE_DIR"); !set {
-			_ = os.Setenv("OPENCLAW_STATE_DIR", oc.StateDir)
-		}
-	}
-	if oc.CLITimeout != "" {
-		if _, set := os.LookupEnv(execenv.OpenclawCLITimeoutEnv); !set {
-			_ = os.Setenv(execenv.OpenclawCLITimeoutEnv, oc.CLITimeout)
-		}
-	}
+	return filepath.Clean(path)
 }

@@ -74,8 +74,6 @@ func TestRunConfigShowIncludesProfileAndDefaults(t *testing.T) {
 		"ws_claim_poll_interval:",
 		"heartbeat_interval:",
 		"agent_timeout:",
-		"codex_semantic_inactivity_timeout:",
-		"codex_handshake_timeout:",
 		"disable_auto_update:",
 		"auto_update_check_interval:",
 		"disable_auto_reload:",
@@ -210,8 +208,6 @@ func TestApplyConfigSetSupportsDaemonKeys(t *testing.T) {
 		{"poll_interval", "10s"},
 		{"ws_claim_poll_interval", "3m"},
 		{"heartbeat_interval", "5s"},
-		{"codex_semantic_inactivity_timeout", "15m"},
-		{"codex_handshake_timeout", "45s"},
 		{"disable_auto_update", "true"},
 		{"auto_update_check_interval", "12h"},
 		{"disable_auto_reload", "true"},
@@ -228,8 +224,6 @@ func TestApplyConfigSetSupportsDaemonKeys(t *testing.T) {
 		cfg.PollInterval != "10s" ||
 		cfg.WSClaimPollInterval != "3m" ||
 		cfg.HeartbeatInterval != "5s" ||
-		cfg.CodexSemanticInactivityTimeout != "15m" ||
-		cfg.CodexHandshakeTimeout != "45s" ||
 		cfg.DisableAutoUpdate != true ||
 		cfg.AutoUpdateCheckInterval != "12h" ||
 		cfg.DisableAutoReload != true {
@@ -267,8 +261,6 @@ func TestApplyConfigSetPositiveDurationRoundTripsToDaemonResolver(t *testing.T) 
 	}{
 		{"ws_claim_poll_interval", func(cfg cli.CLIConfig) string { return cfg.WSClaimPollInterval }},
 		{"heartbeat_interval", func(cfg cli.CLIConfig) string { return cfg.HeartbeatInterval }},
-		{"codex_semantic_inactivity_timeout", func(cfg cli.CLIConfig) string { return cfg.CodexSemanticInactivityTimeout }},
-		{"codex_handshake_timeout", func(cfg cli.CLIConfig) string { return cfg.CodexHandshakeTimeout }},
 		{"auto_update_check_interval", func(cfg cli.CLIConfig) string { return cfg.AutoUpdateCheckInterval }},
 	}
 	for _, tc := range cases {
@@ -353,8 +345,8 @@ func TestApplyConfigSetRejectsBadValues(t *testing.T) {
 		{"ws claim poll zero", "ws_claim_poll_interval", "0s", "positive"},
 		{"heartbeat bad duration", "heartbeat_interval", "abc", "duration"},
 		{"heartbeat zero", "heartbeat_interval", "0s", "positive"},
-		{"codex semantic zero", "codex_semantic_inactivity_timeout", "0s", "positive"},
-		{"codex handshake bad", "codex_handshake_timeout", "10", "duration"},
+		{"retired codex semantic", "codex_semantic_inactivity_timeout", "0s", "unknown config key"},
+		{"retired codex handshake", "codex_handshake_timeout", "10", "unknown config key"},
 		{"agent_timeout bad duration", "agent_timeout", "abc", "duration"},
 		{"agent_timeout negative", "agent_timeout", "-1s", ">= 0"},
 		{"disable_auto_update bad bool", "disable_auto_update", "maybe", "true"},

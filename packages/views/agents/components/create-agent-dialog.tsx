@@ -268,7 +268,6 @@ export function CreateAgentDialog({
         // (which now goes through the audited `/env` endpoint). The
         // dialog's create call still accepts custom_env at create
         // time, but the source values aren't available here.
-        if (template.custom_args.length) data.custom_args = template.custom_args;
         if (template.max_concurrent_tasks) {
           data.max_concurrent_tasks = template.max_concurrent_tasks;
         }
@@ -429,6 +428,7 @@ export function CreateAgentDialog({
 
             <ModelDropdown
               runtimeId={selectedRuntime?.id ?? null}
+              runtimeProvider={selectedRuntime?.provider}
               runtimeOnline={selectedRuntime?.status === "online"}
               value={model}
               onChange={setModel}

@@ -194,9 +194,9 @@ export function buildDuplicateDraft(
     runtimeId: keepsRuntime
       ? (source.runtime_id as string)
       : options.fallbackRuntimeId,
-    model: keepsRuntime ? source.model ?? "" : "",
-    thinkingLevel: keepsRuntime ? source.thinking_level ?? "" : "",
-    serviceTier: keepsRuntime ? source.service_tier ?? "" : "",
+    model: "",
+    thinkingLevel: "",
+    serviceTier: "",
     skillIds: new Set(source.skills.map((skill) => skill.id)),
     ...deriveDuplicateAccess(source),
   };
@@ -205,8 +205,7 @@ export function buildDuplicateDraft(
 /**
  * Assembles the `POST /api/agents` body. Empty execution overrides are omitted
  * rather than sent as `""` so the runtime resolves its own default, and the
- * duplicate-only fields are the runtime-independent ones (`custom_args`,
- * concurrency) — mirroring `multica agent copy`.
+ * duplicate-only field is concurrency — mirroring `multica agent copy`.
  */
 export function buildCreateAgentRequest(options: {
   draft: AgentDraft;
@@ -240,9 +239,6 @@ export function buildCreateAgentRequest(options: {
     template,
   };
   if (duplicateSource) {
-    if (duplicateSource.custom_args.length > 0) {
-      request.custom_args = duplicateSource.custom_args;
-    }
     const sourceConcurrency = duplicateSource.max_concurrent_tasks;
     if (
       Number.isInteger(sourceConcurrency) &&

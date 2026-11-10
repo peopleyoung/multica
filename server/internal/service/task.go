@@ -78,7 +78,8 @@ type TaskService struct {
 	// whole feature off — no pending marker, no pills — which is the expected
 	// state for a self-hosted deployment with no MULTICA_LLM_* configuration.
 	// Wired in router.go from the same *llm.Client that backs chat auto-titling.
-	QuickActions ChatQuickActionsLLM
+	QuickActions        ChatQuickActionsLLM
+	QuickActionsForTask func(context.Context, db.AgentTaskQueue) (ChatQuickActionsLLM, error)
 	// quickActionsInFlight (chat session id -> struct{}{}) and
 	// quickActionsRunning admit suggestion passes: one per session, and a
 	// process-wide ceiling. Both zero values are usable, so a TaskService built
@@ -2196,7 +2197,7 @@ func (s *TaskService) FinalizeChatTaskEnqueue(ctx context.Context, task db.Agent
 // This is an explicit user action, so it ignores the per-device quick-actions
 // toggle (which only gates automatic generation at send time).
 func (s *TaskService) RegenerateChatQuickActions(ctx context.Context, chatSession db.ChatSession, expectedMessageID pgtype.UUID) (targetMessageID pgtype.UUID, targetTask db.AgentTaskQueue, err error) {
-	if s.QuickActions == nil || !s.QuickActions.Enabled() {
+	if s.QuickActionsForTask == nil && (s.QuickActions == nil || !s.QuickActions.Enabled()) {
 		return pgtype.UUID{}, db.AgentTaskQueue{}, ErrChatQuickActionsUnavailable
 	}
 
@@ -2244,6 +2245,10 @@ func (s *TaskService) RegenerateChatQuickActions(ctx context.Context, chatSessio
 	task, err := s.Queries.GetAgentTask(ctx, target.TaskID)
 	if err != nil {
 		return pgtype.UUID{}, db.AgentTaskQueue{}, fmt.Errorf("load target turn task: %w", err)
+	}
+
+	if client := s.quickActionsClient(ctx, task); client == nil || !client.Enabled() {
+		return pgtype.UUID{}, db.AgentTaskQueue{}, ErrChatQuickActionsUnavailable
 	}
 
 	slog.Info("chat quick-actions regenerate accepted",

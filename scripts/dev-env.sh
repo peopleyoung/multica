@@ -35,7 +35,7 @@ DEV_DESKTOP_APP_DATA="${MULTICA_DEV_DESKTOP_APP_DATA:-}"
 DEV_PROFILES_HOME="${MULTICA_DEV_PROFILES_HOME:-$HOME/.multica/profiles}"
 
 DEV_EMAIL="${MULTICA_DEV_EMAIL:-dev@localhost}"
-DEV_CODE_DEFAULT=888888
+DEV_USERNAME="${MULTICA_DEV_USERNAME:-multica_dev}"
 WORKSPACE_NAME="${MULTICA_DEV_WORKSPACE_NAME:-Dev}"
 WORKSPACE_SLUG="${MULTICA_DEV_WORKSPACE_SLUG:-dev}"
 
@@ -51,8 +51,7 @@ DEV_TMPDIR="${MULTICA_DEV_TMPDIR:-$HOME/.multica/dev-tmp}"
 # silently outranks server_url in a saved profile config. Every long-lived child
 # is launched without them, so a local daemon cannot authenticate its local
 # token against the production API — which fails as a bare 401 and reads like a
-# product bug. PATH is never stripped: the daemon resolves agent CLI paths by
-# forking the login shell.
+# product bug. PATH is preserved so Git, Shell tools and configured MCP servers remain available.
 CLEAN_ENV=(env
   -u MULTICA_SERVER_URL -u MULTICA_TOKEN -u MULTICA_WORKSPACE_ID
   -u MULTICA_DAEMON_PORT -u MULTICA_AGENT_ID -u MULTICA_AGENT_NAME
@@ -313,25 +312,6 @@ load_env_file() {
   set +a
   # shellcheck disable=SC1091
   . "$root/scripts/local-env.sh"
-}
-
-# The verification code has to be in the file BEFORE the backend starts: the
-# handler reads the variable at request time, but the process loads the file
-# once. Setting it here removes the start → edit → restart detour, and is what
-# makes `up` able to log itself in without a human reading a log for a code.
-ensure_dev_code() {
-  local file="$REPO_ROOT/$1" tmp
-  if grep -qE '^MULTICA_DEV_VERIFICATION_CODE=[0-9]{6}$' "$file"; then
-    return 0
-  fi
-  if grep -q '^MULTICA_DEV_VERIFICATION_CODE=' "$file"; then
-    tmp="$(mktemp)"
-    sed "s/^MULTICA_DEV_VERIFICATION_CODE=.*/MULTICA_DEV_VERIFICATION_CODE=$DEV_CODE_DEFAULT/" "$file" > "$tmp"
-    mv "$tmp" "$file"
-  else
-    printf '\nMULTICA_DEV_VERIFICATION_CODE=%s\n' "$DEV_CODE_DEFAULT" >> "$file"
-  fi
-  info "Set MULTICA_DEV_VERIFICATION_CODE=$DEV_CODE_DEFAULT in $1 (ignored when APP_ENV=production)."
 }
 
 rewrite_env_ports() {
@@ -628,8 +608,6 @@ start_web() {
   die "web never came up. Log: $(log_file web)"
 }
 
-# send-code once, verify-code once. Repeated verify attempts lock the code out
-# and start returning 400 even when it is correct, so retrying is self-defeating.
 write_profile_config() {
   local config=$1 pat=$2 ws=$3
   mkdir -p "$PROFILE_DIR"
@@ -647,8 +625,26 @@ EOF
 
 ensure_credentials() {
   local server="http://localhost:${BACKEND_PORT}" config="$PROFILE_DIR/config.json"
-  local code="${MULTICA_DEV_VERIFICATION_CODE:-$DEV_CODE_DEFAULT}"
+  local password_file="$PROFILE_DIR/login-password" user_id
   local verify jwt pat ws
+
+  if [ ! -s "$password_file" ]; then
+    mkdir -p "$PROFILE_DIR"
+    (umask 077; openssl rand -hex 24 > "$password_file")
+    # This is the checkout's isolated development database, never a public
+    # email-based credential reset. Preserve the original development user ID.
+    user_id="$(psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -v dev_email="$DEV_EMAIL" -tA <<'SQL'
+SELECT id FROM "user" WHERE email = :'dev_email';
+SQL
+)"
+    local account_args=(--create --email="$DEV_EMAIL")
+    if [ -n "$user_id" ]; then account_args=(--user-id="$user_id"); fi
+    if ! go -C "$REPO_ROOT/server" run ./cmd/account-admin "${account_args[@]}" \
+      --username="$DEV_USERNAME" --password-stdin < "$password_file"; then
+      rm -f "$password_file"
+      die "Cannot provision the development password account."
+    fi
+  fi
 
   if [ -f "$config" ]; then
     pat="$(json_field "$(cat "$config")" token || true)"
@@ -661,15 +657,13 @@ ensure_credentials() {
     fi
   fi
 
-  curl -sf -X POST "$server/auth/send-code" -H 'Content-Type: application/json' \
-    -d "{\"email\":\"${DEV_EMAIL}\"}" >/dev/null \
-    || die "send-code failed. Is MULTICA_DEV_VERIFICATION_CODE set and APP_ENV non-production?"
-
-  verify="$(curl -sS -X POST "$server/auth/verify-code" -H 'Content-Type: application/json' \
-    -d "{\"email\":\"${DEV_EMAIL}\",\"code\":\"${code}\"}")"
+  verify="$(node -e '
+    const fs = require("fs");
+    process.stdout.write(JSON.stringify({username:process.argv[1],password:fs.readFileSync(process.argv[2],"utf8").trimEnd()}));
+  ' "$DEV_USERNAME" "$password_file" | curl -sS -X POST "$server/auth/login" \
+    -H 'Content-Type: application/json' --data-binary @-)"
   jwt="$(json_field "$verify" token || true)"
-  [ -n "$jwt" ] || die "verify-code failed: $verify
-Do not retry immediately — repeated attempts lock the code. Wait ~40s and re-run."
+  [ -n "$jwt" ] || die "Password login failed; initialize the development account with account-admin."
 
   local pat_response
   pat_response="$(curl -sS -X POST "$server/api/tokens" -H "Authorization: Bearer $jwt" \
@@ -701,7 +695,7 @@ Do not retry immediately — repeated attempts lock the code. Wait ~40s and re-r
 
   write_profile_config "$config" "$pat" "$ws"
   WORKSPACE_ID="$ws"
-  ok "Logged in as $DEV_EMAIL and wrote profile $PROFILE"
+  ok "Logged in as $DEV_USERNAME and wrote profile $PROFILE"
 }
 
 # The CLI refuses `daemon start` anywhere under a daemon-task marker, so a task
@@ -1036,7 +1030,7 @@ print_handoff() {
 ${C_GREEN}✓ Environment ready.${C_OFF}
 
   ${entrypoint}
-  Sign in     ${DEV_EMAIL}  ·  code ${MULTICA_DEV_VERIFICATION_CODE:-$DEV_CODE_DEFAULT}
+  Sign in     ${DEV_USERNAME}  ·  password file ${PROFILE_DIR}/login-password
   Backend     http://localhost:${BACKEND_PORT}   (GET /health reports pid + commit + started_at)
   Commit      $(git -C "$REPO_ROOT" rev-parse --short HEAD 2>/dev/null || echo unknown)
   Environment ${NAME}$( [ "${TTL_HOURS:-0}" != 0 ] && printf ' (expires %s)' "$EXPIRES_AT" )
@@ -1164,7 +1158,6 @@ Start the rest with 'make up C=api,web', or run 'make up C=daemon' from your own
     fi
     info "Created $ENV_FILE"
   fi
-  ensure_dev_code "$ENV_FILE"
   load_env_file "$ENV_FILE"
 
   acquire_lock

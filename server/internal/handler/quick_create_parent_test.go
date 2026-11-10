@@ -11,6 +11,7 @@ import (
 	"github.com/multica-ai/multica/server/internal/entitlement"
 	"github.com/multica-ai/multica/server/internal/entitlement/entitlementtest"
 	"github.com/multica-ai/multica/server/internal/service"
+	"github.com/multica-ai/multica/server/internal/testutil"
 	"github.com/multica-ai/multica/server/pkg/agent"
 )
 
@@ -36,37 +37,11 @@ func TestQuickCreateIssueParentTrustBoundary(t *testing.T) {
 	}
 	ctx := context.Background()
 
-	// Resolve the agent this request targets, then bump the CLI version on the
-	// runtime BOUND TO that agent — that is the runtime the version gate checks
-	// (the handler uses agent.RuntimeID). Picking an arbitrary `LIMIT 1`
-	// agent_runtime is wrong when the shared test workspace holds more than one
-	// runtime (other handler tests register their own): the LIMIT 1 row need
-	// not be the agent's runtime, so the agent's real runtime stays on the
-	// seed's empty '{}' metadata and trips the daemon-version gate before we
-	// ever reach the parent_issue_id check.
-	var runtimeID, agentID string
-	if err := testPool.QueryRow(ctx,
-		`SELECT id FROM agent WHERE workspace_id = $1 LIMIT 1`,
-		testWorkspaceID,
-	).Scan(&agentID); err != nil {
-		t.Fatalf("fetch agent: %v", err)
-	}
-	if err := testPool.QueryRow(ctx,
-		`SELECT runtime_id FROM agent WHERE id = $1`,
-		agentID,
-	).Scan(&runtimeID); err != nil {
-		t.Fatalf("fetch agent runtime: %v", err)
-	}
-	if _, err := testPool.Exec(ctx,
-		`UPDATE agent_runtime SET metadata = jsonb_build_object('cli_version', $1::text) WHERE id = $2`,
-		agent.MinQuickCreateFieldsCLIVersion, runtimeID,
-	); err != nil {
-		t.Fatalf("bump runtime cli_version: %v", err)
-	}
-	t.Cleanup(func() {
-		testPool.Exec(context.Background(),
-			`UPDATE agent_runtime SET metadata = '{}'::jsonb WHERE id = $1`, runtimeID)
-	})
+	// Own a fresh heartbeat so suite duration cannot expire the shared seed
+	// before this test reaches the parent/attachment trust boundary.
+	metadata, _ := json.Marshal(map[string]string{"cli_version": agent.MinQuickCreateFieldsCLIVersion})
+	runtimeID := dbfx.Runtime(t, "quick-create parent", testutil.Cols{"metadata": metadata})
+	agentID := dbfx.Agent(t, "quick-create parent", runtimeID)
 
 	// Same-workspace parent — must be accepted and threaded through.
 	var localParentID string
@@ -314,13 +289,13 @@ func TestQuickCreateIssueParentTrustBoundary(t *testing.T) {
 
 	t.Run("legacy daemon only rejects requests using explicit fields", func(t *testing.T) {
 		if _, err := testPool.Exec(ctx,
-			`UPDATE agent_runtime SET metadata = jsonb_build_object('cli_version', '0.4.2') WHERE id = $1`,
+			`UPDATE agent_runtime SET provider='claude', metadata = jsonb_build_object('cli_version', '0.4.2') WHERE id = $1`,
 			runtimeID,
 		); err != nil {
 			t.Fatalf("set legacy daemon version: %v", err)
 		}
 		defer testPool.Exec(ctx,
-			`UPDATE agent_runtime SET metadata = jsonb_build_object('cli_version', $1::text) WHERE id = $2`,
+			`UPDATE agent_runtime SET provider='native', metadata = jsonb_build_object('cli_version', $1::text, 'capabilities', jsonb_build_array('native-runtime-v1')) WHERE id = $2`,
 			agent.MinQuickCreateFieldsCLIVersion, runtimeID,
 		)
 

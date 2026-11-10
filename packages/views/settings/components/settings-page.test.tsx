@@ -29,6 +29,7 @@ vi.mock("./quick-actions-tab", stub("QuickActionsTab"));
 vi.mock("./keyboard-shortcuts-tab", stub("KeyboardShortcutsTab"));
 vi.mock("./plugins-tab", stub("PluginsTab"));
 vi.mock("./mcp-tab", stub("McpTab"));
+vi.mock("./models-tab", stub("ModelsTab"));
 vi.mock("./billing-tab", stub("BillingTab"));
 
 const shell = vi.hoisted(() => ({

@@ -355,6 +355,36 @@ func (h *Handler) InitiateListModels(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	resolvedRuntimeID := uuidToString(rt.ID)
+	if rt.Provider == "native" {
+		rows, err := h.Queries.ListWorkspaceModels(r.Context(), rt.WorkspaceID)
+		if err != nil {
+			writeError(w, 500, "cannot list workspace models")
+			return
+		}
+		if len(rows) > 0 {
+			models := make([]ModelEntry, 0, len(rows))
+			for _, row := range rows {
+				if row.Enabled {
+					models = append(models, ModelEntry{ID: uuidToString(row.ID), Label: row.Name, Default: row.IsDefault})
+				}
+			}
+			now := time.Now()
+			writeJSON(w, 200, &ModelListRequest{ID: randomID(), RuntimeID: resolvedRuntimeID, Status: ModelListCompleted, Models: models, Supported: true, CreatedAt: now, UpdatedAt: now})
+			return
+		}
+		if _, err := h.LLM.NativeCapabilities(); err != nil {
+			writeError(w, http.StatusServiceUnavailable, "native model is not configured on the API server")
+			return
+		}
+		now := time.Now()
+		model := h.LLM.DefaultModel()
+		writeJSON(w, http.StatusOK, &ModelListRequest{
+			ID: randomID(), RuntimeID: resolvedRuntimeID, Status: ModelListCompleted,
+			Models:    []ModelEntry{{ID: model, Label: model, Default: true}},
+			Supported: false, CreatedAt: now, UpdatedAt: now,
+		})
+		return
+	}
 
 	if r.URL.Query().Get("force") != "true" {
 		if cached := h.cachedModelCatalog(r.Context(), resolvedRuntimeID); cached != nil {

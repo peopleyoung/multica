@@ -19,7 +19,7 @@ func claimAgentInstructionsForTest(t *testing.T, runtimeID string) (taskID strin
 
 	w := httptest.NewRecorder()
 	req := newDaemonTokenRequest("POST", "/api/daemon/runtimes/"+runtimeID+"/tasks/claim", nil,
-		testWorkspaceID, "squad-briefing-claim")
+		testWorkspaceID, runtimeDaemonID(t, runtimeID))
 	req = withURLParam(req, "runtimeId", runtimeID)
 
 	testHandler.ClaimTaskByRuntime(w, req)

@@ -89,8 +89,12 @@ RETURNING *;
 -- Builder sessions own their hidden execution agent. Deleting the session
 -- removes that carrier and its task rows; the kind guard prevents this cleanup
 -- path from ever deleting a user-authored agent.
-DELETE FROM agent
-WHERE id = $1 AND kind = 'system' AND system_key LIKE 'agent_builder:%';
+WITH target AS (
+    SELECT agent.id, agent.workspace_id FROM agent WHERE agent.id = $1 AND agent.kind = 'system' AND agent.system_key LIKE 'agent_builder:%'
+), cleared_native_sessions AS (
+    DELETE FROM native_session s USING target t WHERE s.agent_id = t.id AND s.workspace_id = t.workspace_id
+)
+DELETE FROM agent WHERE agent.id IN (SELECT target.id FROM target);
 
 -- name: RebindAgentBuilderRuntime :one
 -- Re-points a builder carrier at another runtime mid-conversation. The carrier

@@ -6,7 +6,9 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/multica-ai/multica/server/pkg/protocol"
 )
 
 // Cols is one fixture row: column name to value. Values are bound as query
@@ -204,22 +206,36 @@ func (f *Fixture) Comment(t TB, issueID, content string, over ...Cols) string {
 	}, over))
 }
 
-// Runtime inserts an online cloud runtime.
+// Runtime inserts an online native runtime.
 func (f *Fixture) Runtime(t TB, name string, over ...Cols) string {
 	t.Helper()
-	return f.Insert(t, "agent_runtime", merge(Cols{
+	cols := merge(Cols{
 		"workspace_id": f.WorkspaceID,
-		"daemon_id":    nil,
+		"daemon_id":    uuid.NewString(),
 		"name":         name,
 		"runtime_mode": "cloud",
-		"provider":     "handler_test_runtime",
+		"provider":     "native",
 		"status":       "online",
 		"device_info":  "",
 		"metadata":     Raw("'{}'::jsonb"),
 		"last_seen_at": Raw("now()"),
 		"visibility":   "private",
 		"owner_id":     f.UserID,
-	}, over))
+	}, over)
+	// Native fixtures represent a currently registered daemon unless a test
+	// explicitly supplies stale or malformed metadata.
+	if cols["provider"] == "native" {
+		hasMetadata := false
+		for _, overrides := range over {
+			if _, ok := overrides["metadata"]; ok {
+				hasMetadata = true
+			}
+		}
+		if !hasMetadata {
+			cols["metadata"] = `{"capabilities":["` + protocol.DaemonCapabilityNativeRuntimeV1 + `"]}`
+		}
+	}
+	return f.Insert(t, "agent_runtime", cols)
 }
 
 // Agent inserts an agent bound to runtimeID. Pass an empty runtimeID for an

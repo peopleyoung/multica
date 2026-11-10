@@ -104,21 +104,6 @@ type CLIConfig struct {
 	// DefaultAgentTimeout.
 	AgentTimeout *string `json:"agent_timeout,omitempty"`
 
-	// CodexSemanticInactivityTimeout is the Codex-specific inactivity
-	// watchdog window (Go duration string). Persist-once semantics match
-	// PollInterval: empty = not set, positive = use this value.
-	// Resolution precedence: --codex-semantic-inactivity-timeout flag,
-	// MULTICA_CODEX_SEMANTIC_INACTIVITY_TIMEOUT env, this field,
-	// DefaultCodexSemanticInactivityTimeout.
-	CodexSemanticInactivityTimeout string `json:"codex_semantic_inactivity_timeout,omitempty"`
-
-	// CodexHandshakeTimeout caps the Codex app-server startup RPCs (Go
-	// duration string). Persist-once semantics match PollInterval.
-	// Resolution precedence: --codex-handshake-timeout flag,
-	// MULTICA_CODEX_HANDSHAKE_TIMEOUT env, this field,
-	// DefaultCodexHandshakeTimeout.
-	CodexHandshakeTimeout string `json:"codex_handshake_timeout,omitempty"`
-
 	// DisableAutoUpdate, when true, turns off the daemon's periodic CLI
 	// self-update poll. Only a single direction is persistable — the
 	// --no-auto-update flag is likewise one-way — because the env/default

@@ -52,8 +52,6 @@ func ExplainExecError(err error) error {
 // outer boundary can recognise its own work through any number of %w wraps.
 type explainedExecError struct{ error }
 
-func (e explainedExecError) Unwrap() error { return e.error }
-
 // IsExecFormatError reports whether the OS refused to run a file because it is
 // not a program this machine can execute.
 //

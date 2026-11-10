@@ -8,7 +8,8 @@ RETURNING *;
 -- ONE statement — therefore one round trip and, more importantly, one commit
 -- instead of one per message. Commit acknowledgement (IO:XactSync) is ~94% of
 -- this SQL's load in production, so the commit count is the thing being
--- optimized; the round trip is a bonus.
+-- optimized; the round trip is a bonus. The caller supplies claim/event-stable
+-- deduplication keys; retransmitted rows are not republished or recounted.
 --
 -- The rows arrive as parallel arrays rather than as one jsonb document, even
 -- though a jsonb document is the tidier Go side. content and output routinely
@@ -39,7 +40,8 @@ RETURNING *;
 -- transcript with a prefix of the batch and no way to complete it — the daemon
 -- does not retry this endpoint. One statement makes the batch all-or-nothing,
 -- which buys consistency; a batch that fails is still lost whole, so closing
--- the gap for real needs a retry plus a (task_id, seq) uniqueness rule.
+-- the gap for real still needs daemon-side retries. Deduplication keys make
+-- repeated callbacks safe without another commit or a read-before-write race.
 --
 -- The ORDER BY is a contract, not decoration. A bare `INSERT ... RETURNING`
 -- has no defined row order, and the caller republishes these rows as realtime
@@ -63,9 +65,10 @@ WITH incoming AS (
         unnest(sqlc.arg('inputs')::text[]) AS input,
         unnest(sqlc.arg('outputs')::text[]) AS output,
         unnest(sqlc.arg('created_ats')::text[]) AS created_at,
-        unnest(sqlc.arg('output_truncations')::text[]) AS output_truncated
+        unnest(sqlc.arg('output_truncations')::text[]) AS output_truncated,
+        unnest(sqlc.arg('dedup_keys')::text[]) AS dedup_key
 ), inserted AS (
-    INSERT INTO task_message (id, task_id, seq, type, tool, content, input, output, created_at, output_truncated, call_id)
+    INSERT INTO task_message (id, task_id, seq, type, tool, content, input, output, created_at, output_truncated, call_id, dedup_key)
     SELECT
         m.id,
         sqlc.arg('task_id')::uuid,
@@ -77,8 +80,10 @@ WITH incoming AS (
         NULLIF(m.output, ''),
         COALESCE(NULLIF(m.created_at, '')::timestamptz, now()),
         NULLIF(m.output_truncated, '')::bool,
-        NULLIF(m.call_id, '')
+        NULLIF(m.call_id, ''),
+        NULLIF(m.dedup_key, '')
     FROM incoming AS m
+    ON CONFLICT (task_id, dedup_key) WHERE dedup_key IS NOT NULL DO NOTHING
     RETURNING *
 )
 SELECT * FROM inserted ORDER BY seq ASC;

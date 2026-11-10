@@ -133,7 +133,7 @@ const mockSquadsData = vi.hoisted(
 // version" (#7633). Tests flip this to drop the row and prove the panel no
 // longer blocks on it.
 const mockRuntimesData = vi.hoisted(
-  () => ({ list: [{ id: "runtime-1", metadata: { cli_version: "1.2.3" } }] as Array<{ id: string; metadata: Record<string, unknown> }> }),
+  () => ({ list: [{ id: "runtime-1", metadata: { cli_version: "1.2.3" } }] as Array<{ id: string; provider?: string; metadata: Record<string, unknown> }> }),
 );
 
 // The real handle mints an id when it inserts the placeholder and hands it to
@@ -1163,6 +1163,25 @@ describe("AgentCreatePanel", () => {
   // runtime at all; the server's version gate (which reads the row by id,
   // regardless of role) stays the trust boundary.
   describe("version pre-check with an unlisted runtime (#7633)", () => {
+    it.each([false, true])("allows native creation without a bundled CLI version (explicit fields: %s)", async (explicitFields) => {
+      const user = userEvent.setup();
+      mockRuntimesData.list = [{ id: "runtime-1", provider: "native", metadata: {} }];
+      if (explicitFields) {
+        mockIssueDraftStore.draft.shared.priority = "high";
+        mockIssueDraftStore.draft.shared.dueDate = "2026-12-01";
+      }
+      renderPanel({ onClose: vi.fn(), isExpanded: false, setIsExpanded: vi.fn() });
+
+      expect(screen.queryByText(/doesn't report a CLI version/i)).not.toBeInTheDocument();
+      const create = screen.getByRole("button", { name: /^Create$/i });
+      expect(create).toBeEnabled();
+      await user.click(create);
+      await waitFor(() => expect(mockQuickCreateIssue).toHaveBeenCalledTimes(1));
+      if (explicitFields) {
+        expect(mockQuickCreateIssue).toHaveBeenCalledWith(expect.objectContaining({ priority: "high", due_date: "2026-12-01" }));
+      }
+    });
+
     it("does not block Create when the selected agent's runtime is not in the visible list", async () => {
       const user = userEvent.setup();
       // Member view: the agent's runtime-1 is a private machine they don't own,

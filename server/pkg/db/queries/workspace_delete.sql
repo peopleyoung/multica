@@ -676,6 +676,11 @@ deleted_packages AS (
 DELETE FROM plugin_installation WHERE id IN (SELECT id FROM installations);
 
 -- name: DeleteWorkspaceAgents :exec
+WITH cleared_native_sessions AS (
+    DELETE FROM native_session WHERE workspace_id = $1
+), cleared_model_calls AS (
+    DELETE FROM model_call WHERE workspace_id = $1
+)
 DELETE FROM agent WHERE agent.workspace_id = $1;
 
 -- name: DeleteWorkspaceRuntimesAndProjects :exec

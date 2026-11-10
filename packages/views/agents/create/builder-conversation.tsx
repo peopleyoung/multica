@@ -96,6 +96,7 @@ export function BuilderSetup({
           />
           <ModelDropdown
             runtimeId={selectedRuntime?.id ?? null}
+            runtimeProvider={selectedRuntime?.provider}
             runtimeOnline={selectedRuntime?.status === "online"}
             value={draft.model}
             onChange={(model) => onChange(applyDraftModelChange(draft, model))}

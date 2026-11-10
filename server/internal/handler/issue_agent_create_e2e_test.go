@@ -6,6 +6,8 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+
+	"github.com/multica-ai/multica/server/internal/testutil"
 )
 
 // createPrivateAgentOwnedBy inserts a private agent owned by ownerID and
@@ -16,6 +18,7 @@ import (
 // private and owned by the same originator.
 func createPrivateAgentOwnedBy(t *testing.T, name, ownerID string) string {
 	t.Helper()
+	runtimeID := dbfx.Runtime(t, "private originator runtime", testutil.Cols{"visibility": "public"})
 	var agentID string
 	if err := testPool.QueryRow(context.Background(), `
 		INSERT INTO agent (
@@ -26,7 +29,7 @@ func createPrivateAgentOwnedBy(t *testing.T, name, ownerID string) string {
 		VALUES ($1, $2, '', 'cloud', '{}'::jsonb,
 		        $3, 'private', 1, $4, '', '{}'::jsonb, '[]'::jsonb)
 		RETURNING id
-	`, testWorkspaceID, name, handlerTestRuntimeID(t), ownerID).Scan(&agentID); err != nil {
+	`, testWorkspaceID, name, runtimeID, ownerID).Scan(&agentID); err != nil {
 		t.Fatalf("create private agent %q: %v", name, err)
 	}
 	t.Cleanup(func() { testPool.Exec(context.Background(), `DELETE FROM agent WHERE id = $1`, agentID) })

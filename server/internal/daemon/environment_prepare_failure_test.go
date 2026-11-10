@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"testing"
 
-	"github.com/multica-ai/multica/server/internal/daemon/execenv"
 	"github.com/multica-ai/multica/server/pkg/taskfailure"
 )
 
@@ -73,43 +72,6 @@ func TestEnvironmentSetupFailurePreservesMessage(t *testing.T) {
 	}
 	if got := taskfailure.NormalizeDaemonReason(taskfailure.Classify(tagged.Error()).String(), tagged.Error()); got != taskfailure.ReasonEnvironmentPrepareFailed {
 		t.Errorf("server-side normalization of the same text = %q, want %q", got, taskfailure.ReasonEnvironmentPrepareFailed)
-	}
-}
-
-// TestTaskRunFailureReasonPrefersSpecificPreparationSentinels guards the branch
-// order. Preparation is one phase with several known causes, and three of them
-// already have their own reason. The generic bucket is what is left over, so it
-// has to be checked last — a run that died on the OpenClaw CLI deadline still
-// needs the copy naming MULTICA_OPENCLAW_CLI_TIMEOUT, and one that ran out of
-// skill downloads still needs to be retryable.
-func TestTaskRunFailureReasonPrefersSpecificPreparationSentinels(t *testing.T) {
-	cases := map[string]struct {
-		err  error
-		want string
-	}{
-		"openclaw cli timeout": {
-			err: asEnvironmentSetupFailure(fmt.Errorf(
-				"prepare execution environment: execenv: prepare openclaw config: locate openclaw active config: %w",
-				fmt.Errorf("openclaw config file: context deadline exceeded (process: signal: killed): %w", execenv.ErrOpenclawCLITimeout))),
-			want: taskfailure.ReasonRuntimeCLITimeout.String(),
-		},
-		"skill bundle unavailable": {
-			err: asEnvironmentSetupFailure(fmt.Errorf("prepare execution environment: %w",
-				fmt.Errorf("%w: download skill: connection refused", errSkillBundleUnavailable))),
-			want: taskfailure.ReasonSkillBundleUnavailable.String(),
-		},
-		"prepare budget exhausted": {
-			err:  fmt.Errorf("%w after 5m0s", errTaskPrepareTimeout),
-			want: taskfailure.ReasonTimeout.String(),
-		},
-	}
-
-	for name, tc := range cases {
-		t.Run(name, func(t *testing.T) {
-			if got := taskRunFailureReason(tc.err); got != tc.want {
-				t.Errorf("taskRunFailureReason = %q, want %q", got, tc.want)
-			}
-		})
 	}
 }
 

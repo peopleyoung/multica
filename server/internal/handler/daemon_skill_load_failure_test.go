@@ -117,9 +117,9 @@ func TestClaimTaskByRuntime_SkillReadFailurePreservesTask(t *testing.T) {
 			failing := newSkillFileReadFailureHandler(t)
 			runtimeID, taskID, _ := seedSkillLoadFixture(t, ctx, tc.fixture)
 
-			req := newDaemonTokenRequest("POST", "/api/daemon/runtimes/"+runtimeID+"/tasks/claim", nil, testWorkspaceID, "skill-read-fail-daemon")
+			req := newDaemonTokenRequest("POST", "/api/daemon/runtimes/"+runtimeID+"/tasks/claim", nil, testWorkspaceID, runtimeDaemonID(t, runtimeID))
 			if tc.capability != "" {
-				req.Header.Set("X-Client-Capabilities", tc.capability)
+				req.Header.Set("X-Client-Capabilities", tc.capability+",native-runtime-v1")
 			}
 			req = withURLParam(req, "runtimeId", runtimeID)
 			testutil.Call(t, failing.ClaimTaskByRuntime, req).Want(http.StatusInternalServerError)

@@ -161,7 +161,7 @@ func TestExecuteAndDrainSupplementNegotiation(t *testing.T) {
 			})
 			backend := &supplementGateBackend{}
 			opts := agent.ExecOptions{EnableTaskSupplement: negotiated}
-			if _, _, err := d.executeAndDrain(t.Context(), backend, "original", opts, d.logger, "task", "", new(atomic.Int32)); err != nil {
+			if _, _, err := d.executeAndDrain(t.Context(), backend, "original", opts, d.logger, "task", new(atomic.Int32)); err != nil {
 				t.Fatal(err)
 			}
 			if backend.enabled != negotiated {

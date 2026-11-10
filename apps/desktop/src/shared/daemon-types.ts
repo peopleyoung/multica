@@ -91,7 +91,7 @@ export function daemonStatusAlive(status: string | undefined): boolean {
  * "what does this mean for me?" — i.e. whether tasks can run on this device.
  *
  * `runtimeCount` is the number of runtimes the local daemon has registered
- * (claude / codex / gemini / ... — one per detected CLI). It's only consulted
+ * (Multica Native in current daemons). It's only consulted
  * when state === "running".
  */
 export function daemonStateDescription(state: DaemonState, runtimeCount: number): string {

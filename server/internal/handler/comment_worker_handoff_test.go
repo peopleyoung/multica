@@ -18,9 +18,9 @@ import (
 
 func claimWorkerReplyRun(t *testing.T, runtimeID string) *AgentTaskResponse {
 	t.Helper()
-	req := newDaemonTokenRequest(http.MethodPost, "/api/daemon/runtimes/"+runtimeID+"/tasks/claim", nil, testWorkspaceID, "worker-reply-handoff")
+	req := newDaemonTokenRequest(http.MethodPost, "/api/daemon/runtimes/"+runtimeID+"/tasks/claim", nil, testWorkspaceID, runtimeDaemonID(t, runtimeID))
 	req = withURLParam(req, "runtimeId", runtimeID)
-	req.Header.Set("X-Client-Capabilities", protocol.DaemonCapabilityCoalescedCommentsV1)
+	req.Header.Set("X-Client-Capabilities", protocol.DaemonCapabilityCoalescedCommentsV1+",native-runtime-v1")
 	var response struct {
 		Task *AgentTaskResponse `json:"task"`
 	}

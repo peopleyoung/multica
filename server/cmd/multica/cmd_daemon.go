@@ -35,7 +35,7 @@ var daemonCmd = &cobra.Command{
 var daemonStartCmd = &cobra.Command{
 	Use:   "start",
 	Short: "Start the local agent runtime daemon",
-	Long: "Start the daemon process that polls for runs and executes them using local agent CLIs (Claude, Codex).\n" +
+	Long: "Start the daemon process that polls for runs and executes them using Multica Native and the deployment LLM API.\n" +
 		"Runs in the background by default. Use --foreground to run in the current terminal.\n" +
 		"Boot autostart is opt-in: when this profile's daemon has none, a hint points at " +
 		"'multica daemon autostart enable'; an existing Multica-created entry is refreshed in place.",
@@ -105,8 +105,6 @@ func init() {
 	f.Duration("ws-claim-poll-interval", 0, "Healthy WebSocket claim safety-poll upper bound (env: MULTICA_DAEMON_WS_CLAIM_POLL_INTERVAL)")
 	f.Duration("heartbeat-interval", 0, "Heartbeat interval (env: MULTICA_DAEMON_HEARTBEAT_INTERVAL)")
 	f.Duration("agent-timeout", 0, "Absolute per-run wall-clock cap; 0 = no cap, rely on the watchdogs (env: MULTICA_AGENT_TIMEOUT)")
-	f.Duration("codex-semantic-inactivity-timeout", 0, "Codex semantic inactivity timeout (env: MULTICA_CODEX_SEMANTIC_INACTIVITY_TIMEOUT)")
-	f.Duration("codex-handshake-timeout", 0, "Codex app-server startup RPC timeout (env: MULTICA_CODEX_HANDSHAKE_TIMEOUT)")
 	f.Int("max-concurrent-tasks", 0, "Maximum concurrent runs (env: MULTICA_DAEMON_MAX_CONCURRENT_TASKS)")
 	f.Bool("no-auto-update", false, "Disable periodic CLI self-update (env: MULTICA_DAEMON_AUTO_UPDATE=false)")
 	f.Duration("auto-update-interval", 0, "How often to poll GitHub for a newer release (env: MULTICA_DAEMON_AUTO_UPDATE_INTERVAL)")
@@ -128,8 +126,6 @@ func init() {
 	rf.Duration("ws-claim-poll-interval", 0, "Healthy WebSocket claim safety-poll upper bound (env: MULTICA_DAEMON_WS_CLAIM_POLL_INTERVAL)")
 	rf.Duration("heartbeat-interval", 0, "Heartbeat interval (env: MULTICA_DAEMON_HEARTBEAT_INTERVAL)")
 	rf.Duration("agent-timeout", 0, "Absolute per-run wall-clock cap; 0 = no cap, rely on the watchdogs (env: MULTICA_AGENT_TIMEOUT)")
-	rf.Duration("codex-semantic-inactivity-timeout", 0, "Codex semantic inactivity timeout (env: MULTICA_CODEX_SEMANTIC_INACTIVITY_TIMEOUT)")
-	rf.Duration("codex-handshake-timeout", 0, "Codex app-server startup RPC timeout (env: MULTICA_CODEX_HANDSHAKE_TIMEOUT)")
 	rf.Int("max-concurrent-tasks", 0, "Maximum concurrent runs (env: MULTICA_DAEMON_MAX_CONCURRENT_TASKS)")
 	rf.Bool("no-auto-update", false, "Disable periodic CLI self-update (env: MULTICA_DAEMON_AUTO_UPDATE=false)")
 	rf.Duration("auto-update-interval", 0, "How often to poll GitHub for a newer release (env: MULTICA_DAEMON_AUTO_UPDATE_INTERVAL)")
@@ -893,12 +889,6 @@ func buildDaemonStartArgs(cmd *cobra.Command) []string {
 		d, _ := cmd.Flags().GetDuration("agent-timeout")
 		args = append(args, "--agent-timeout", d.String())
 	}
-	if d, _ := cmd.Flags().GetDuration("codex-semantic-inactivity-timeout"); d > 0 {
-		args = append(args, "--codex-semantic-inactivity-timeout", d.String())
-	}
-	if d, _ := cmd.Flags().GetDuration("codex-handshake-timeout"); d > 0 {
-		args = append(args, "--codex-handshake-timeout", d.String())
-	}
 	if n, _ := cmd.Flags().GetInt("max-concurrent-tasks"); n > 0 {
 		args = append(args, "--max-concurrent-tasks", strconv.Itoa(n))
 	}
@@ -1038,22 +1028,6 @@ func runDaemonForeground(cmd *cobra.Command) error {
 	}
 	if agentTimeoutOverride != nil {
 		overrides.AgentTimeout = agentTimeoutOverride
-	}
-	semanticFlag, _ := cmd.Flags().GetDuration("codex-semantic-inactivity-timeout")
-	semanticOverride, err := resolveDaemonDurationOverride(semanticFlag, "MULTICA_CODEX_SEMANTIC_INACTIVITY_TIMEOUT", fileCfg.CodexSemanticInactivityTimeout)
-	if err != nil {
-		return err
-	}
-	if semanticOverride > 0 {
-		overrides.CodexSemanticInactivityTimeout = semanticOverride
-	}
-	handshakeFlag, _ := cmd.Flags().GetDuration("codex-handshake-timeout")
-	handshakeOverride, err := resolveDaemonDurationOverride(handshakeFlag, "MULTICA_CODEX_HANDSHAKE_TIMEOUT", fileCfg.CodexHandshakeTimeout)
-	if err != nil {
-		return err
-	}
-	if handshakeOverride > 0 {
-		overrides.CodexHandshakeTimeout = handshakeOverride
 	}
 	maxFlag, _ := cmd.Flags().GetInt("max-concurrent-tasks")
 	if n := resolveDaemonIntOverride(maxFlag, "MULTICA_DAEMON_MAX_CONCURRENT_TASKS", fileCfg.MaxConcurrentTasks); n > 0 {

@@ -135,7 +135,7 @@ func TestExecuteAndDrainKeepsTerminalResultObservedDuringCleanup(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	result, _, err := d.executeAndDrain(ctx, backend, "test", agent.ExecOptions{}, slog.Default(), "terminal-race", "", new(atomic.Int32))
+	result, _, err := d.executeAndDrain(ctx, backend, "test", agent.ExecOptions{}, slog.Default(), "terminal-race", new(atomic.Int32))
 	if err != nil {
 		t.Fatalf("executeAndDrain: %v", err)
 	}
@@ -234,7 +234,7 @@ func TestExecuteAndDrainKeepsTerminalResultHandedOverAfterForceStop(t *testing.T
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	result, _, err := d.executeAndDrain(ctx, backend, "test", agent.ExecOptions{}, slog.New(probe), "late-terminal", "", new(atomic.Int32))
+	result, _, err := d.executeAndDrain(ctx, backend, "test", agent.ExecOptions{}, slog.New(probe), "late-terminal", new(atomic.Int32))
 	if err != nil {
 		t.Fatalf("executeAndDrain: %v", err)
 	}
@@ -276,7 +276,7 @@ func TestExecuteAndDrainDoesNotDelayBackendsWithoutATerminalBoundary(t *testing.
 	t.Cleanup(cancel)
 
 	start := time.Now()
-	result, _, err := d.executeAndDrain(ctx, wedgedBackend{}, "p", agent.ExecOptions{}, slog.Default(), "wedged", "", new(atomic.Int32))
+	result, _, err := d.executeAndDrain(ctx, wedgedBackend{}, "p", agent.ExecOptions{}, slog.Default(), "wedged", new(atomic.Int32))
 	elapsed := time.Since(start)
 	if err != nil {
 		t.Fatalf("executeAndDrain: %v", err)

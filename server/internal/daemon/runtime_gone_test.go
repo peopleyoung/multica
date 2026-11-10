@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/multica-ai/multica/server/pkg/protocol"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -13,8 +14,6 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
-
-	"github.com/multica-ai/multica/server/pkg/agent"
 )
 
 // freshDaemon builds a Daemon with every map field the production New() seeds
@@ -26,7 +25,6 @@ func freshDaemon(serverURL string) *Daemon {
 		workspaces:                make(map[string]*workspaceState),
 		runtimeIndex:              make(map[string]Runtime),
 		runtimeSet:                newRuntimeSetWatcher(),
-		agentVersions:             make(map[string]string),
 		wsHBLastAck:               make(map[string]time.Time),
 		activeEnvRoots:            make(map[string]int),
 		runtimeGoneInflight:       make(map[string]struct{}),
@@ -39,23 +37,6 @@ func freshDaemon(serverURL string) *Daemon {
 type testNopWriter struct{}
 
 func (testNopWriter) Write(p []byte) (int, error) { return len(p), nil }
-
-// stubAgentVersion swaps out the agent version probes that registerRuntimesForWorkspace
-// would normally shell out for, and restores the production hooks on cleanup.
-// Returns a no-op cleanup so callers can use t.Cleanup directly.
-func stubAgentVersion(t *testing.T) func() {
-	t.Helper()
-	origDetect := detectAgentVersion
-	origCheck := checkAgentMinVersion
-	detectAgentVersion = func(_ context.Context, _ agent.Command) (string, error) {
-		return "9.9.9", nil
-	}
-	checkAgentMinVersion = func(_, _ string) error { return nil }
-	return func() {
-		detectAgentVersion = origDetect
-		checkAgentMinVersion = origCheck
-	}
-}
 
 func TestRemoveStaleRuntime_PrunesAllLocalState(t *testing.T) {
 	t.Parallel()
@@ -148,8 +129,8 @@ func newHandleRuntimeGoneFixture(t *testing.T) *handleRuntimeGoneFixture {
 			// Each register call returns the same fresh runtime ID so
 			// downstream assertions can observe it.
 			w.Header().Set("Content-Type", "application/json")
-			_ = json.NewEncoder(w).Encode(RegisterResponse{
-				Runtimes: []Runtime{{ID: "rt-new", Name: "Claude", Provider: "claude", Status: "online"}},
+			_ = json.NewEncoder(w).Encode(RegisterResponse{ServerCapabilities: []string{protocol.DaemonCapabilityNativeRuntimeV1}, NativeRuntimeProtocol: protocol.NativeRuntimeSupport(),
+				Runtimes: []Runtime{{ID: "rt-new", Name: "Claude", Provider: "native", Status: "online"}},
 				Repos:    []RepoData{},
 			})
 		case strings.HasSuffix(r.URL.Path, "/recover-orphans"):
@@ -165,9 +146,8 @@ func newHandleRuntimeGoneFixture(t *testing.T) *handleRuntimeGoneFixture {
 	// produce a non-empty request body. The fake server ignores the body,
 	// but the registerRuntimesForWorkspace pre-flight (DetectVersion) would
 	// otherwise reject the call.
-	d.cfg.Agents = map[string]AgentEntry{"claude": {Path: "/usr/bin/true"}}
+	d.cfg.Agents = map[string]AgentEntry{"native": {Path: "/usr/bin/true"}}
 	// Replace the agent version probe so the test doesn't shell out.
-	t.Cleanup(stubAgentVersion(t))
 	return &handleRuntimeGoneFixture{daemon: d, server: srv, registerCount: &registerCount}
 }
 
@@ -251,8 +231,7 @@ func TestHandleRuntimeGone_BackoffOnFailure(t *testing.T) {
 	t.Cleanup(srv.Close)
 
 	d := freshDaemon(srv.URL)
-	d.cfg.Agents = map[string]AgentEntry{"claude": {Path: "/usr/bin/true"}}
-	t.Cleanup(stubAgentVersion(t))
+	d.cfg.Agents = map[string]AgentEntry{"native": {Path: "/usr/bin/true"}}
 
 	d.workspaces["ws-1"] = &workspaceState{workspaceID: "ws-1", runtimeIDs: []string{"rt-1", "rt-2"}}
 	d.runtimeIndex["rt-1"] = Runtime{ID: "rt-1"}
@@ -414,7 +393,7 @@ func newMultiProviderRegisterFixture(t *testing.T, providers map[string]string) 
 			}
 			fx.mu.Unlock()
 			w.Header().Set("Content-Type", "application/json")
-			_ = json.NewEncoder(w).Encode(RegisterResponse{
+			_ = json.NewEncoder(w).Encode(RegisterResponse{ServerCapabilities: []string{protocol.DaemonCapabilityNativeRuntimeV1}, NativeRuntimeProtocol: protocol.NativeRuntimeSupport(),
 				Runtimes: runtimes,
 				Repos:    []RepoData{},
 			})
@@ -431,7 +410,6 @@ func newMultiProviderRegisterFixture(t *testing.T, providers map[string]string) 
 	for p := range providers {
 		d.cfg.Agents[p] = AgentEntry{Path: "/usr/bin/true"}
 	}
-	t.Cleanup(stubAgentVersion(t))
 	fx.daemon = d
 	fx.server = srv
 	return fx
@@ -453,7 +431,7 @@ func TestHandleRuntimeGone_PartialWorkspaceRecoveryKeepsSibling(t *testing.T) {
 	// This is the regression test for Finding #3 (register response is
 	// authoritative for the workspace's runtime set, not an append).
 	fx := newMultiProviderRegisterFixture(t, map[string]string{
-		"claude": "rt-claude-1",
+		"native": "rt-claude-1",
 		"codex":  "rt-codex-1",
 	})
 	d := fx.daemon
@@ -461,11 +439,11 @@ func TestHandleRuntimeGone_PartialWorkspaceRecoveryKeepsSibling(t *testing.T) {
 		workspaceID: "ws-1",
 		runtimeIDs:  []string{"rt-claude-1", "rt-codex-1"},
 	}
-	d.runtimeIndex["rt-claude-1"] = Runtime{ID: "rt-claude-1", Provider: "claude"}
+	d.runtimeIndex["rt-claude-1"] = Runtime{ID: "rt-claude-1", Provider: "native"}
 	d.runtimeIndex["rt-codex-1"] = Runtime{ID: "rt-codex-1", Provider: "codex"}
 
 	// Only the claude runtime gets deleted server-side.
-	fx.markDeleted("claude")
+	fx.markDeleted("native")
 	d.handleRuntimeGone("rt-claude-1")
 
 	got := append([]string(nil), d.workspaces["ws-1"].runtimeIDs...)
@@ -504,7 +482,7 @@ func TestHandleRuntimeGone_DistinctDeletionsWithinCoalesceWindowBothRecover(t *t
 	// re-register: success on call #1 must NOT suppress call #2. Regression
 	// for Finding #2 (success-case clear of reregisterNextAttempt).
 	fx := newMultiProviderRegisterFixture(t, map[string]string{
-		"claude": "rt-claude-1",
+		"native": "rt-claude-1",
 		"codex":  "rt-codex-1",
 	})
 	d := fx.daemon
@@ -512,12 +490,12 @@ func TestHandleRuntimeGone_DistinctDeletionsWithinCoalesceWindowBothRecover(t *t
 		workspaceID: "ws-1",
 		runtimeIDs:  []string{"rt-claude-1", "rt-codex-1"},
 	}
-	d.runtimeIndex["rt-claude-1"] = Runtime{ID: "rt-claude-1", Provider: "claude"}
+	d.runtimeIndex["rt-claude-1"] = Runtime{ID: "rt-claude-1", Provider: "native"}
 	d.runtimeIndex["rt-codex-1"] = Runtime{ID: "rt-codex-1", Provider: "codex"}
 
 	// Sequential, NOT concurrent: the first call fully completes before the
 	// second starts, so the in-flight set never collides.
-	fx.markDeleted("claude")
+	fx.markDeleted("native")
 	d.handleRuntimeGone("rt-claude-1")
 
 	if got := fx.registerCount.Load(); got != 1 {
@@ -526,7 +504,7 @@ func TestHandleRuntimeGone_DistinctDeletionsWithinCoalesceWindowBothRecover(t *t
 	// Inspect the new claude id the fake assigned, so we can detect that
 	// the second recovery actually ran register again.
 	fx.mu.Lock()
-	claudeIDAfterFirst := fx.providerToID["claude"]
+	claudeIDAfterFirst := fx.providerToID["native"]
 	fx.mu.Unlock()
 
 	// Now delete codex within the coalesce window (effectively t<1s after
@@ -715,8 +693,8 @@ func TestHandleRuntimeGone_RecoveryContextSurvivesCallerCancellation(t *testing.
 			default:
 			}
 			w.Header().Set("Content-Type", "application/json")
-			_ = json.NewEncoder(w).Encode(RegisterResponse{
-				Runtimes: []Runtime{{ID: "rt-new", Name: "claude", Provider: "claude", Status: "online"}},
+			_ = json.NewEncoder(w).Encode(RegisterResponse{ServerCapabilities: []string{protocol.DaemonCapabilityNativeRuntimeV1}, NativeRuntimeProtocol: protocol.NativeRuntimeSupport(),
+				Runtimes: []Runtime{{ID: "rt-new", Name: "native", Provider: "native", Status: "online"}},
 			})
 			return
 		}
@@ -725,8 +703,7 @@ func TestHandleRuntimeGone_RecoveryContextSurvivesCallerCancellation(t *testing.
 	t.Cleanup(srv.Close)
 
 	d := freshDaemon(srv.URL)
-	d.cfg.Agents = map[string]AgentEntry{"claude": {Path: "/usr/bin/true"}}
-	t.Cleanup(stubAgentVersion(t))
+	d.cfg.Agents = map[string]AgentEntry{"native": {Path: "/usr/bin/true"}}
 
 	// rootCtx is what handleRuntimeGone uses for recovery. We keep it alive.
 	rootCtx, rootCancel := context.WithCancel(context.Background())
@@ -774,8 +751,7 @@ func TestHandleRuntimeGone_RecoveryContextStopsOnDaemonShutdown(t *testing.T) {
 	t.Cleanup(func() { close(releaseRegister) })
 
 	d := freshDaemon(srv.URL)
-	d.cfg.Agents = map[string]AgentEntry{"claude": {Path: "/usr/bin/true"}}
-	t.Cleanup(stubAgentVersion(t))
+	d.cfg.Agents = map[string]AgentEntry{"native": {Path: "/usr/bin/true"}}
 
 	rootCtx, rootCancel := context.WithCancel(context.Background())
 	t.Cleanup(rootCancel)

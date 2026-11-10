@@ -1,0 +1,21 @@
+CREATE TABLE IF NOT EXISTS model_call (
+    id uuid NOT NULL DEFAULT gen_random_uuid(),
+    workspace_id uuid NOT NULL,
+    task_id uuid,
+    session_id uuid,
+    purpose text NOT NULL CHECK (purpose IN ('execution', 'summary', 'title', 'quick_actions')),
+    scope_key text NOT NULL,
+    model text NOT NULL,
+    retry_attempt integer NOT NULL DEFAULT 0,
+    acquired_at timestamptz NOT NULL DEFAULT now(),
+    lease_until timestamptz NOT NULL DEFAULT now() + interval '11 minutes',
+    finished_at timestamptz,
+    outcome text NOT NULL DEFAULT 'active' CHECK (outcome IN ('active', 'completed', 'failed', 'cancelled')),
+    reserved_tokens bigint NOT NULL CHECK (reserved_tokens > 0),
+    charged_tokens bigint NOT NULL CHECK (charged_tokens > 0),
+    input_tokens bigint,
+    output_tokens bigint,
+    cached_tokens bigint,
+    duration_ms bigint,
+    http_status integer
+);

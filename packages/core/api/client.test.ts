@@ -4,10 +4,42 @@ import { configStore } from "../config";
 import type { StorageAdapter, User } from "../types";
 import { ApiClient, ApiError, CHAT_DRAFT_RESTORE_CAPABILITY, clientErrorMessage } from "./client";
 import { EMPTY_PLUGIN_PACKAGE_LIST, EMPTY_PLUGIN_PREVIEW, EMPTY_PLUGIN_SURFACE_LAUNCH } from "./schemas";
+import type { ModelConnectionInput } from "../types/workspace-model";
 
 afterEach(() => {
   configStore.getState().setAgentConversationStartersSupported(false);
   vi.unstubAllGlobals();
+});
+
+describe("ApiClient model connection tests", () => {
+  const input: ModelConnectionInput = {
+    base_url: "https://model.example.test/v1", model: "probe",
+    capabilities: { api: "responses", streaming_tool_calls: false, json_object: false, image_input: false, context_tokens: 32000, max_output_tokens: 1000, max_tool_argument_bytes: 4096, max_tools: 32 },
+  };
+  it.each([undefined, "model-1"])("tests draft or saved credentials without saving (%s)", async (id) => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({ ok: true, stage: "complete", code: "ok", duration_ms: 234, api_key: "must-be-stripped" }), { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+    const signal = new AbortController().signal;
+    const client = new ApiClient("https://api.example.test");
+    const result = await client.testWorkspaceModel("ws-1", input, id, signal);
+    expect(fetchMock).toHaveBeenCalledOnce();
+    expect(fetchMock).toHaveBeenCalledWith(`https://api.example.test/api/workspaces/ws-1/models${id ? `/${id}` : ""}/test`, expect.objectContaining({ method: "POST", body: JSON.stringify(input), signal }));
+    expect(result).toEqual({ ok: true, stage: "complete", code: "ok", duration_ms: 234 });
+  });
+  it.each([
+    null, {}, { ok: "true" },
+    { ok: true, stage: "text", code: "ok", duration_ms: 10 },
+    { ok: true, stage: "future-stage", code: "ok", duration_ms: 10 },
+    { ok: true, stage: "complete", duration_ms: 10 },
+    { ok: true, stage: "complete", code: "ok", duration_ms: -1 },
+  ])("does not report malformed diagnostic responses as success: %j", async (raw) => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify(raw), { status: 200 })));
+    expect(await new ApiClient("https://api.example.test").testWorkspaceModel("ws-1", input)).toBeNull();
+  });
+  it("retains a failed result when an unknown failure stage or code is returned", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify({ ok: false, stage: "future-stage", duration_ms: 10 }), { status: 200 })));
+    expect(await new ApiClient("https://api.example.test").testWorkspaceModel("ws-1", input)).toEqual({ ok: false, stage: "unknown", code: "unknown", duration_ms: 10 });
+  });
 });
 
 describe("ApiClient status reorder", () => {
@@ -2213,7 +2245,7 @@ describe("ApiClient model discovery response schema", () => {
   function stubJSON(body: unknown) {
     vi.stubGlobal(
       "fetch",
-      vi.fn().mockResolvedValue(
+      vi.fn().mockImplementation(async () =>
         new Response(JSON.stringify(body), {
           status: 200,
           headers: { "Content-Type": "application/json" },
@@ -2233,6 +2265,17 @@ describe("ApiClient model discovery response schema", () => {
       supported: true,
       models: [{ id: "claude-sonnet-4-6" }],
     });
+  });
+
+  it("targets the onboarding workspace on model discovery and polling", async () => {
+    stubJSON(completed);
+    const client = new ApiClient("https://api.example.test");
+    await client.initiateListModels("rt-1", { workspaceSlug: "onboarding-target" });
+    await client.getListModelsResult("rt-1", "req-1", "onboarding-target");
+    expect(vi.mocked(fetch)).toHaveBeenCalledTimes(2);
+    for (const [, init] of vi.mocked(fetch).mock.calls) {
+      expect(new Headers(init?.headers).get("X-Workspace-Slug")).toBe("onboarding-target");
+    }
   });
 
   it("keeps the cache markers on a server-cached snapshot", async () => {
@@ -3139,5 +3182,43 @@ describe("ApiClient shared credential across windows", () => {
     await expect(client.markOnboardingComplete()).rejects.toBeInstanceOf(ApiError);
 
     expect(onUnauthorized).toHaveBeenCalledTimes(1);
+  });
+});
+
+
+describe("ApiClient workspace models", () => {
+  it("falls back safely for malformed list and save responses", async () => {
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({ id: 23, api_key: "never-return-this" }), { status: 200, headers: { "Content-Type": "application/json" } })));
+    const client = new ApiClient("https://api.example.test");
+    expect(await client.listWorkspaceModels("ws-1")).toEqual([]);
+    expect(await client.saveWorkspaceModel("ws-1", {
+      name: "Model", base_url: "https://example.test/v1", model: "model-a", enabled: true, is_default: true,
+      capabilities: { streaming_tool_calls: true, json_object: false, image_input: false, context_tokens: 32000, max_output_tokens: 1000, max_tool_argument_bytes: 4096, max_tools: 32 },
+    })).toBeNull();
+    vi.restoreAllMocks();
+  });
+
+  it.each([undefined, null, "unknown-api", "responses"])("handles model API value %s without dropping the model", async (api) => {
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify([{
+      id: "model-1", name: "GPT", base_url: "https://example.test/v1", model: "fixture-gpt",
+      capabilities: { api, context_tokens: 32000, max_output_tokens: 1000, max_tool_argument_bytes: 4096, max_tools: 32 },
+    }]), { status: 200, headers: { "Content-Type": "application/json" } })));
+    const client = new ApiClient("https://api.example.test");
+    const [model] = await client.listWorkspaceModels("ws-1");
+    expect(model?.capabilities.api).toBe(api === "responses" ? "responses" : "chat_completions");
+  });
+
+  it("strips unrecognized credentials and defaults optional flags", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify([{
+      id: "model-1", name: "First", base_url: "https://example.test/v1", model: "upstream-a", api_key: "must-be-stripped",
+      capabilities: { context_tokens: 32000, max_output_tokens: 1000, max_tool_argument_bytes: 4096, max_tools: 32 },
+    }]), { status: 200, headers: { "Content-Type": "application/json" } })));
+    const client = new ApiClient("https://api.example.test");
+    const [model] = await client.listWorkspaceModels("ws-1");
+    expect(model).toMatchObject({ id: "model-1", enabled: false, has_api_key: false, is_default: false });
+    expect(model).not.toHaveProperty("api_key");
+    expect(model?.capabilities.image_input).toBe(false);
+    expect(model?.capabilities.api).toBe("chat_completions");
   });
 });

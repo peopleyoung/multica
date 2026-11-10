@@ -38,3 +38,36 @@ describe("api.deleteComment", () => {
     expect(fetchMock).toHaveBeenCalledWith(url, expect.objectContaining({ method: "DELETE" }));
   });
 });
+
+describe("api.nativeModel", () => {
+  afterEach(() => { vi.unstubAllGlobals(); vi.restoreAllMocks(); });
+  it("parses fixed deployment metadata and fails visibly on malformed responses", async () => {
+    vi.spyOn(console, "log").mockImplementation(() => {});
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify({ status: "completed", supported: false, models: [{ id: "fixed", default: true }] })))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ models: "malformed" })));
+    vi.stubGlobal("fetch", fetchMock);
+    expect((await api.nativeModel("runtime")).models?.[0].id).toBe("fixed");
+    expect((await api.nativeModel("runtime")).status).toBe("failed");
+    expect(fetchMock).toHaveBeenCalledWith("https://api.example.test/api/runtimes/runtime/models", expect.objectContaining({ method: "POST" }));
+  });
+});
+
+describe("api.passwordAccount", () => {
+  afterEach(() => { vi.unstubAllGlobals(); vi.restoreAllMocks(); });
+  it("registers without an email and validates the returned session", async () => {
+    vi.spyOn(console, "log").mockImplementation(() => {});
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({ token: "mobile-session", user: { id: "mobile-user", username: "alice" } })));
+    vi.stubGlobal("fetch", fetchMock);
+    const result = await api.registerAccount("alice", "Strong password 2026");
+    expect(fetchMock).toHaveBeenCalledWith("https://api.example.test/auth/register", expect.objectContaining({ method: "POST", body: JSON.stringify({ username: "alice", password: "Strong password 2026" }) }));
+    expect(result.user.id).toBe("mobile-user");
+  });
+  it("rejects malformed credentials before the auth store can save them", async () => {
+    vi.spyOn(console, "log").mockImplementation(() => {});
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify({ token: "", user: { id: "user" } }))));
+    await expect(api.passwordLogin("alice", "Strong password 2026")).rejects.toThrow("Invalid sign-in response");
+  });
+});

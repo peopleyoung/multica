@@ -80,14 +80,14 @@ export function RuntimePicker({
   // runtime's machine for the trigger label regardless of the Mine/All
   // scope, and is reused as-is for the list whenever the scope is "all".
   const allMachines = useMemo(
-    () => buildRuntimeMachines(runtimes, { now: Date.now(), currentUserId }),
+    () => buildRuntimeMachines(runtimes.filter((r) => r.provider === "native" && !r.profile_id), { now: Date.now(), currentUserId }),
     [runtimes, currentUserId],
   );
   const machines = useMemo(
     () =>
       filter === "mine" && currentUserId
         ? buildRuntimeMachines(
-            runtimes.filter((r) => r.owner_id === currentUserId),
+            runtimes.filter((r) => r.provider === "native" && !r.profile_id && r.owner_id === currentUserId),
             { now: Date.now(), currentUserId },
           )
         : allMachines,
@@ -206,7 +206,7 @@ export function RuntimePicker({
       const visible =
         nextFilter === "mine" && currentUserId
           ? buildRuntimeMachines(
-              runtimes.filter((r) => r.owner_id === currentUserId),
+              runtimes.filter((r) => r.provider === "native" && !r.profile_id && r.owner_id === currentUserId),
               { now: Date.now(), currentUserId },
             )
           : allMachines;

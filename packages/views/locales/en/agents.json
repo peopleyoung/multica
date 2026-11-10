@@ -251,6 +251,7 @@
     "service_tier_clear_title": "Clear the speed override and let the local Codex configuration decide"
   },
   "model_dropdown": {
+    "deployment_unavailable": "Model configuration is unavailable. Contact your deployment administrator.",
     "label": "Model",
     "select_runtime_first": "Select a runtime first",
     "default_provider": "Default (provider)",
@@ -258,7 +259,9 @@
     "managed_by_runtime_title": "Model selection is managed by this runtime.",
     "managed_by_runtime_hint": "Configure the model on the runtime host (e.g. Hermes reads it from its own config file).",
     "discovery_failed": "discovery failed",
-    "clear_full": "Clear selection (use provider default)"
+    "clear_full": "Clear selection (use provider default)",
+    "workspace_default": "Workspace default ({{model}})",
+    "save_failed": "Could not save model"
   },
   "tabs": {
     "overview": "Overview",
@@ -278,7 +281,7 @@
     "mcp_config": "MCP",
     "composio_mcp": "MCP Apps",
     "integrations": "Integrations",
-    "runtime_config": "Routing",
+    "runtime_config": "Runtime configuration",
     "discard_dialog_title": "Discard unsaved changes?",
     "discard_dialog_description": "You have unsaved changes in this tab. Leaving now will discard them.",
     "discard_keep": "Keep editing",
@@ -758,6 +761,37 @@
       "started_prefix": "Started {{when}}",
       "dispatched_prefix": "Dispatched {{when}}",
       "queued_prefix": "Queued {{when}}"
+    },
+    "native_runtime": {
+      "host_limits": "Changes apply to the next run. Host permissions are the upper limit.",
+      "owner_only": "Only the runtime owner can change execution capabilities.",
+      "offline": "The runtime is offline. These are its last reported permissions.",
+      "write_files": "Write files in the working directory",
+      "host_allowed": "Allowed by host",
+      "host_disabled": "Disabled by host",
+      "shell": "Run scripts and commands",
+      "shell_effect": "Commands run as the host user, including network and files outside the working directory. Long commands return a job ID for status and logs. Local jobs stop when the task ends.",
+      "services": "External services",
+      "approved_origins": "Approved origins",
+      "none": "None",
+      "service_number": "Service {{number}}",
+      "name": "Service name",
+      "base_url": "API base URL",
+      "token_env": "Credential environment variable",
+      "env_help": "Store the credential in this agent’s Environment settings. Enter only its variable name here. Leave empty for unauthenticated services.",
+      "auth_scheme": "Authentication scheme",
+      "service_write": "Allow changes in this service",
+      "remove_service": "Remove service",
+      "add_service": "Add service",
+      "invalid": "Check names, URLs, credential variable names, and host permissions. Service names must be unique.",
+      "host_setup": "Configure host permissions",
+      "host_setup_help": "The host owner sets MULTICA_NATIVE_ALLOW_WRITE, MULTICA_NATIVE_ALLOW_SHELL, and MULTICA_NATIVE_HTTP_ORIGINS (comma-separated origins), then restarts the runtime. Services allow GET by default; enabling changes also allows POST, PUT, PATCH, and DELETE.",
+      "save": "Save",
+      "token_env_placeholder": "CVAT_TOKEN",
+      "auth_bearer": "Bearer",
+      "auth_token": "Token (CVAT)",
+      "remote_environment": "Use remote execution environment",
+      "remote_environment_help": "Requires the multica_jobs service. Files, commands, artifacts and terminals share its working directory. Enable service writes to run commands or modify files."
     }
   },
   "char_counter": {
@@ -932,6 +966,7 @@
       "environment_prepare_failed": "Couldn't prepare the execution environment",
       "runtime_access_denied": "This agent can't run on its private runtime, so it couldn't reply. Make the runtime public, or rebind/copy the agent to a runtime its owner can use.",
       "invalid_task_identity": "Run identity mismatch",
+      "native_tool_outcome_unknown": "An earlier tool operation has no confirmed result. Check the remote job or files and reconcile its checkpoint before continuing; retrying alone cannot resolve it.",
       "agent_error_provider_auth_or_access": "Provider auth failed",
       "agent_error_provider_quota_limit": "Provider quota exhausted",
       "agent_error_provider_capacity_or_rate_limit": "Rate limited by provider",

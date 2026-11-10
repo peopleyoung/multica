@@ -97,7 +97,7 @@ func TestChatAppliesDefaultModel(t *testing.T) {
 	}
 }
 
-func TestChatRespectsRequestModel(t *testing.T) {
+func TestChatRejectsRequestModelOverride(t *testing.T) {
 	var gotModel string
 	srv := stubUpstream(t, func(w http.ResponseWriter, body map[string]any) {
 		gotModel, _ = body["model"].(string)
@@ -110,11 +110,8 @@ func TestChatRespectsRequestModel(t *testing.T) {
 		Model:    shared.ChatModel("caller-model"),
 		Messages: []openai.ChatCompletionMessageParamUnion{openai.UserMessage("hi")},
 	})
-	if err != nil {
-		t.Fatalf("Chat failed: %v", err)
-	}
-	if gotModel != "caller-model" {
-		t.Fatalf("expected caller model preserved, got %q", gotModel)
+	if err == nil || gotModel != "" {
+		t.Fatalf("model override must fail before an upstream request: model=%q error=%v", gotModel, err)
 	}
 }
 
@@ -260,7 +257,7 @@ func TestGenerateJSONFallsBackToLegacyMaxTokens(t *testing.T) {
 		_, _ = io.WriteString(w, `{"id":"cmpl-1","object":"chat.completion","choices":[{"index":0,"message":{"role":"assistant","content":"{\"actions\":[]}"},"finish_reason":"stop"}]}`)
 	})
 
-	c := New(Config{APIKey: "k", BaseURL: srv.URL, MaxRetries: retries(0)})
+	c := New(Config{APIKey: "k", BaseURL: srv.URL, DefaultModel: "legacy-model", MaxRetries: retries(0)})
 	if _, err := c.GenerateJSON(context.Background(), "legacy-model", "Return JSON.", "Generate actions.", 0.3, 800); err != nil {
 		t.Fatalf("GenerateJSON failed: %v", err)
 	}

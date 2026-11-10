@@ -80,6 +80,32 @@ func runtimeToResponse(rt db.AgentRuntime) AgentRuntimeResponse {
 	}
 }
 
+func (h *Handler) runtimeResponse(rt db.AgentRuntime) AgentRuntimeResponse {
+	response := runtimeToResponse(rt)
+	if rt.Provider == "native" {
+		metadata, ok := response.Metadata.(map[string]any)
+		if !ok {
+			metadata = make(map[string]any)
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+		defer cancel()
+		client := h.LLM
+		var err error
+		if rt.WorkspaceID.Valid {
+			client, err = h.workspaceModelClient(ctx, rt.WorkspaceID, "")
+		}
+		if err == nil {
+			_, err = client.NativeCapabilities()
+		}
+		metadata["native_model_configured"] = err == nil
+		if err == nil {
+			metadata["native_model"] = client.DefaultModel()
+		}
+		response.Metadata = metadata
+	}
+	return response
+}
+
 // ---------------------------------------------------------------------------
 // Runtime Usage
 // ---------------------------------------------------------------------------
@@ -622,7 +648,7 @@ func (h *Handler) UpdateAgentRuntime(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 
-	writeJSON(w, http.StatusOK, runtimeToResponse(rt))
+	writeJSON(w, http.StatusOK, h.runtimeResponse(rt))
 }
 
 func canEditRuntime(member db.Member, rt db.AgentRuntime) bool {
@@ -680,7 +706,7 @@ func (h *Handler) requireRuntimeReadAccess(w http.ResponseWriter, r *http.Reques
 	}
 
 	member, ok := h.requireWorkspaceMember(w, r, uuidToString(rt.WorkspaceID), "runtime not found")
-	if !ok || !canUseRuntimeForAgent(member, rt) {
+	if !ok || !canReadRuntimeData(member, rt) {
 		if ok {
 			writeError(w, http.StatusNotFound, "runtime not found")
 		}
@@ -879,6 +905,14 @@ func (h *Handler) profileInstanceRefusalBlockers(ctx context.Context, runtimeID 
 // packages/core/runtimes/access.ts), so UI, API and CLI agree. See migration
 // 083 for the visibility column.
 func canUseRuntimeForAgent(member db.Member, rt db.AgentRuntime) bool {
+	if rt.Provider != "native" || rt.ProfileID.Valid {
+		return false
+	}
+	return canReadRuntimeData(member, rt)
+}
+
+// Historical runtime data keeps the same owner/visibility access rules after retirement.
+func canReadRuntimeData(member db.Member, rt db.AgentRuntime) bool {
 	if !rt.OwnerID.Valid {
 		return false
 	}
@@ -937,7 +971,7 @@ func (h *Handler) ListAgentRuntimes(w http.ResponseWriter, r *http.Request) {
 
 	resp := make([]AgentRuntimeResponse, len(runtimes))
 	for i, rt := range runtimes {
-		resp[i] = runtimeToResponse(rt)
+		resp[i] = h.runtimeResponse(rt)
 	}
 
 	writeJSON(w, http.StatusOK, resp)

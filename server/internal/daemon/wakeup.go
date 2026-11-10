@@ -418,17 +418,6 @@ func (d *Daemon) readTaskWakeupMessagesForConnection(conn *websocket.Conn, taskW
 				continue
 			}
 			d.taskSupplementSignals.notify(payload.TaskID)
-		case protocol.EventDaemonRuntimeProfilesChanged:
-			var payload protocol.RuntimeProfilesChangedPayload
-			if err := json.Unmarshal(msg.Payload, &payload); err != nil {
-				d.logger.Debug("runtime profile refresh websocket invalid payload", "error", err)
-				continue
-			}
-			if payload.WorkspaceID == "" {
-				d.logger.Debug("runtime profile refresh websocket missing workspace_id")
-				continue
-			}
-			go d.handleRuntimeProfilesChanged(payload)
 		case protocol.EventDaemonWorkspacesChanged:
 			if d.workspaceChanges != nil {
 				d.workspaceChanges.broadcast()
@@ -482,18 +471,6 @@ func (d *Daemon) configureTaskWakeupReadLiveness(conn *websocket.Conn) {
 
 func (d *Daemon) extendTaskWakeupReadDeadline(conn *websocket.Conn) error {
 	return conn.SetReadDeadline(time.Now().Add(taskWakeupPongWait))
-}
-
-func (d *Daemon) handleRuntimeProfilesChanged(payload protocol.RuntimeProfilesChangedPayload) {
-	if payload.WorkspaceID == "" {
-		return
-	}
-	if err := d.refreshWorkspaceRuntimeProfiles(d.recoveryContext(), payload.WorkspaceID); err != nil {
-		d.logger.Debug("runtime profile refresh websocket hint failed",
-			"workspace_id", payload.WorkspaceID,
-			"runtime_profile_id", payload.RuntimeProfileID,
-			"error", err)
-	}
 }
 
 func signalTaskWakeup(taskWakeups chan<- taskWakeup, runtimeID string) {

@@ -47,8 +47,8 @@ func TestCreateAgentBuilderSessionCreatesIsolatedHiddenBuilder(t *testing.T) {
 		return response
 	}
 
-	first := create("builder-model-a")
-	second := create("builder-model-b")
+	first := create("")
+	second := create("")
 	if first.BuilderAgentID == second.BuilderAgentID {
 		t.Fatalf("builder sessions unexpectedly shared an agent: %s", first.BuilderAgentID)
 	}
@@ -58,14 +58,14 @@ func TestCreateAgentBuilderSessionCreatesIsolatedHiddenBuilder(t *testing.T) {
 
 	var kind, systemKey, firstModel string
 	if err := testPool.QueryRow(context.Background(), `
-		SELECT kind, system_key, model FROM agent WHERE id = $1
+		SELECT kind, system_key, COALESCE(model, '') FROM agent WHERE id = $1
 	`, first.BuilderAgentID).Scan(&kind, &systemKey, &firstModel); err != nil {
 		t.Fatalf("load builder agent: %v", err)
 	}
 	if kind != "system" || !strings.HasPrefix(systemKey, "agent_builder:") {
 		t.Fatalf("unexpected builder identity kind=%q system_key=%q", kind, systemKey)
 	}
-	if firstModel != "builder-model-a" {
+	if firstModel != "" {
 		t.Fatalf("first builder model was mutated: got %q", firstModel)
 	}
 	var explicitlyCreated bool
@@ -179,7 +179,7 @@ func newBuilderSession(t *testing.T) CreateAgentBuilderSessionResponse {
 	w := httptest.NewRecorder()
 	testHandler.CreateAgentBuilderSession(w, newRequest(http.MethodPost, "/api/agent-builder/sessions", map[string]any{
 		"runtime_id": testRuntimeID,
-		"model":      "model-pinned-to-runtime-a",
+		"model":      "",
 	}))
 	if w.Code != http.StatusCreated {
 		t.Fatalf("CreateAgentBuilderSession: expected 201, got %d: %s", w.Code, w.Body.String())
@@ -202,7 +202,7 @@ func newTestRuntime(t *testing.T, name, status string) string {
 		)
 		VALUES ($1, NULL, $2, 'cloud', $3, $4, 'switch test runtime', '{}'::jsonb, $5, now())
 		RETURNING id
-	`, testWorkspaceID, name, strings.ToLower(strings.ReplaceAll(name, " ", "_")), status, testUserID).Scan(&runtimeID); err != nil {
+	`, testWorkspaceID, name, "native", status, testUserID).Scan(&runtimeID); err != nil {
 		t.Fatalf("create runtime %q: %v", name, err)
 	}
 	t.Cleanup(func() {
@@ -1249,7 +1249,7 @@ func TestSwitchAgentBuilderRuntimeEnforcesRuntimeAndSessionOwnership(t *testing.
 		INSERT INTO agent_runtime (
 			workspace_id, daemon_id, name, runtime_mode, provider, status, device_info, metadata, owner_id, visibility, last_seen_at
 		)
-		VALUES ($1, NULL, 'Builder Switch Public', 'cloud', 'builder_switch_public', 'online', 'public', '{}'::jsonb, $2, 'public', now())
+		VALUES ($1, NULL, 'Builder Switch Public', 'cloud', 'native', 'online', 'public', '{}'::jsonb, $2, 'public', now())
 		RETURNING id
 	`, testWorkspaceID, testUserID).Scan(&publicRuntimeID); err != nil {
 		t.Fatalf("create public runtime: %v", err)

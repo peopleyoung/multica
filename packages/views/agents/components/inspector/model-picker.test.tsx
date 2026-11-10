@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { cleanup, render, screen } from "@testing-library/react";
 import { I18nProvider } from "@multica/core/i18n/react";
 import type { RuntimeModelsResult } from "@multica/core/types";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -45,7 +45,7 @@ vi.mock("@multica/core/runtimes", () => ({
     mockRefreshRuntimeModels(...args),
 }));
 
-function renderPicker() {
+function renderPicker(runtimeProvider?: string) {
   const queryClient = new QueryClient({
     defaultOptions: { queries: { retry: false } },
   });
@@ -55,6 +55,7 @@ function renderPicker() {
       <QueryClientProvider client={queryClient}>
         <ModelPicker
           runtimeId="rt-claude"
+          runtimeProvider={runtimeProvider}
           runtimeOnline
           value=""
           onChange={onChange}
@@ -65,13 +66,14 @@ function renderPicker() {
   return { ...view, onChange, queryClient };
 }
 
-function openPicker(container: HTMLElement) {
-  const trigger = container.querySelector<HTMLButtonElement>("button");
-  if (!trigger) throw new Error("model picker trigger not rendered");
-  fireEvent.click(trigger);
-}
-
 describe("ModelPicker (inspector)", () => {
+  it("keeps native configuration failures visible without manual model entry", async () => {
+    discovery = async () => { throw new Error("native model is not configured"); };
+    const { container } = renderPicker("native");
+    expect(await screen.findByText(enAgents.model_dropdown.deployment_unavailable)).toBeTruthy();
+    expect(container.querySelector('button, input')).toBeNull();
+  });
+
   afterEach(() => {
     cleanup();
     discovery = async () => CLAUDE_CATALOG;
@@ -79,58 +81,4 @@ describe("ModelPicker (inspector)", () => {
     mockRefreshRuntimeModels.mockReset();
   });
 
-  it("offers the runnable model", async () => {
-    const { container, onChange } = renderPicker();
-    openPicker(container);
-
-    fireEvent.click(await screen.findByText("Fable"));
-    expect(onChange).toHaveBeenCalledWith("claude-fable-5");
-  });
-
-  it("shows an unavailable model with its reason and no way to select it", async () => {
-    const { container, onChange } = renderPicker();
-    openPicker(container);
-
-    const row = await screen.findByText("Fable 5.1 (disabled)");
-    expect(
-      screen.getByText("Update to 2.1.255+ to use Fable 5.1"),
-    ).toBeTruthy();
-
-    fireEvent.click(row);
-    expect(onChange).not.toHaveBeenCalled();
-    expect(row.closest("button")).toBeNull();
-  });
-
-  // A backend older than the field sends nothing, and the picker must simply
-  // not render the section rather than break or show an empty heading.
-  it("renders no unavailable section when the backend omits the field", async () => {
-    discovery = async () => ({
-      models: [{ id: "claude-fable-5", label: "Fable", provider: "anthropic" }],
-      supported: true,
-    });
-
-    const { container } = renderPicker();
-    openPicker(container);
-
-    await screen.findByText("Fable");
-    expect(
-      screen.queryByText(enAgents.pickers.model_unavailable_heading),
-    ).toBeNull();
-  });
-
-  it("exposes the live-catalog refresh from the inspector picker", async () => {
-    mockRefreshRuntimeModels.mockResolvedValue(CLAUDE_CATALOG);
-    const { container, queryClient } = renderPicker();
-    openPicker(container);
-    await screen.findByText("Fable");
-    fireEvent.click(
-      screen.getByRole("button", { name: enAgents.pickers.model_refresh }),
-    );
-
-    expect(mockRefreshRuntimeModels).toHaveBeenCalledWith(
-      queryClient,
-      "rt-claude",
-    );
-    queryClient.clear();
-  });
 });

@@ -142,7 +142,7 @@ const onlineRuntime: AgentRuntime = {
   daemon_id: "daemon-1",
   name: "Claude (Mac)",
   runtime_mode: "local",
-  provider: "claude",
+  provider: "native",
   launch_header: "",
   status: "online",
   device_info: "Mac",

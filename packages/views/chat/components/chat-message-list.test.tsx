@@ -843,6 +843,12 @@ describe("ChatMessageList failure copy (MUL-5370 regression)", () => {
     ).toBeInTheDocument();
   });
 
+  it("explains that an uncertain native operation requires reconciliation", async () => {
+    renderFailure("native_tool_outcome_unknown");
+    expect(await screen.findByText(enChat.message_list.failure.native_tool_outcome_unknown)).toBeInTheDocument();
+    expect(screen.queryByText(FALLBACK)).not.toBeInTheDocument();
+  });
+
   it("degrades an unnamed refined reason to its agent_error family", async () => {
     renderFailure("agent_error.unknown");
     expect(

@@ -3,38 +3,8 @@ package daemon
 import (
 	"testing"
 
-	"github.com/multica-ai/multica/server/pkg/agent"
 	"github.com/multica-ai/multica/server/pkg/taskfailure"
 )
-
-// TestContextExhaustionNeverReplaysTheTask pins the boundary between the two
-// questions GH #6402's fix has to keep apart.
-//
-// "Did this run produce an answer?" is decided by the output alone —
-// classifyPoisonedOutput takes no tool count, and it must not grow one: a
-// context window fills up mid-task far more often than on the first turn, so a
-// tools == 0 gate would miss the common case and leave exactly the silent
-// stall the issue reports.
-//
-// "May we re-run it?" is where the tool count belongs, and the answer here is
-// always no. A saturated session is not a rejected resume, so there is nothing
-// a fresh-session retry of THIS task would cure that letting the NEXT task
-// start clean does not — while replaying a run that already used tools
-// duplicates its side effects.
-func TestContextExhaustionNeverReplaysTheTask(t *testing.T) {
-	failed := agent.Result{
-		Status:    "failed",
-		SessionID: "sess-full",
-		Error: "claude ended the turn with terminal_reason=" + taskfailure.TerminalReasonPromptTooLong +
-			": the session's context window is exhausted and compaction could not recover it (Prompt is too long)",
-	}
-
-	for _, tools := range []int32{0, 1, 17} {
-		if shouldRetryWithFreshSession(failed, "sess-full", tools, "claude") {
-			t.Errorf("tools=%d: a full context window must not trigger an in-task replay", tools)
-		}
-	}
-}
 
 // TestContextExhaustionClassifiesRegardlessOfToolUse is the other half: the
 // reclassification itself is reachable for a run that got real work done before

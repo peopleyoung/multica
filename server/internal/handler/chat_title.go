@@ -11,6 +11,7 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/multica-ai/multica/server/internal/integrations/channel/engine"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
+	"github.com/multica-ai/multica/server/pkg/llm"
 	"github.com/multica-ai/multica/server/pkg/protocol"
 )
 
@@ -90,12 +91,6 @@ Rules:
 // default/original title). sourceText is the user's first message, which the
 // model condenses into a title.
 func (h *Handler) maybeGenerateChatTitleAsync(workspaceID, userID string, sessionID pgtype.UUID, currentTitle, sourceText string) {
-	// Short-circuit before spawning a goroutine when the LLM layer is disabled
-	// (self-hosted without MULTICA_LLM_API_KEY / MULTICA_LLM_BASE_URL): the
-	// original title is kept as-is, exactly matching pre-feature behavior.
-	if h.LLM == nil || !h.LLM.Enabled() {
-		return
-	}
 	if strings.TrimSpace(sourceText) == "" {
 		return
 	}
@@ -111,7 +106,7 @@ func (h *Handler) maybeGenerateChatTitleAsync(workspaceID, userID string, sessio
 			if rec := recover(); rec != nil {
 				slog.Error("chat title generation panicked; keeping original title",
 					"session_id", uuidToString(sessionID),
-					"panic", rec,
+					"failure", "panic",
 				)
 			}
 		}()
@@ -125,7 +120,7 @@ func (h *Handler) maybeGenerateChatTitleAsync(workspaceID, userID string, sessio
 			// the send already succeeded and the original title stands.
 			slog.Warn("chat title generation failed; keeping original title",
 				"session_id", uuidToString(sessionID),
-				"error", err,
+				"failure", "model_or_title_update_failed",
 			)
 			return
 		}
@@ -159,10 +154,20 @@ func (h *Handler) maybeGenerateChatTitleAsync(workspaceID, userID string, sessio
 //     the CAS write hit a real DB error. Callers treat this as best-effort and
 //     keep the original title.
 func (h *Handler) generateChatSessionTitle(ctx context.Context, sessionID pgtype.UUID, currentTitle, sourceText string) (db.ChatSession, bool, error) {
-	// DefaultModel() is used implicitly by GenerateText when model == "": a
-	// deployment configures MULTICA_LLM_DEFAULT_MODEL (or the built-in
-	// gpt-5.6-luna fallback) — no model is threaded through from the frontend.
-	raw, err := h.LLM.GenerateText(ctx, "", chatTitleSystemPrompt, sourceText)
+	session, err := h.Queries.GetChatSession(ctx, sessionID)
+	if err != nil {
+		return db.ChatSession{}, false, err
+	}
+	ctx = llm.WithCallScope(ctx, llm.CallScope{WorkspaceID: uuidToString(session.WorkspaceID), SessionID: uuidToString(sessionID), Purpose: "title"})
+	agent, err := h.Queries.GetAgent(ctx, session.AgentID)
+	if err != nil {
+		return db.ChatSession{}, false, err
+	}
+	client, err := h.workspaceModelClient(ctx, session.WorkspaceID, agent.Model.String)
+	if err != nil {
+		return db.ChatSession{}, false, err
+	}
+	raw, err := client.GenerateText(ctx, "", chatTitleSystemPrompt, sourceText)
 	if err != nil {
 		return db.ChatSession{}, false, err
 	}

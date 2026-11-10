@@ -17,6 +17,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/multica-ai/multica/server/internal/analytics"
@@ -358,6 +359,7 @@ type TaskCancellationActor struct {
 }
 
 type AgentTaskResponse struct {
+	NativeInputTaskID        string                 `json:"native_input_task_id,omitempty"`
 	StartClaimSupported      bool                   `json:"start_claim_supported,omitempty"`
 	CancelledByCommentChange bool                   `json:"cancelled_by_comment_change,omitempty"`
 	CancelledBy              *TaskCancellationActor `json:"cancelled_by,omitempty"`
@@ -515,8 +517,8 @@ type AgentTaskResponse struct {
 	WakeupSystemRule         string               `json:"wakeup_system_rule,omitempty"`      // set when a platform rule (e.g. child_done) started the run
 	WakeupJoined             string               `json:"wakeup_joined,omitempty"`           // wakeups that fired while this run waited to start and joined it instead of queuing their own
 	HandoffNote              string               `json:"handoff_note,omitempty"`            // legacy assignment handoff instruction retained for installed clients; rendered by the daemon only in the per-turn prompt
-	SquadID                  string               `json:"squad_id,omitempty"`                // for quick-create tasks where the picker was a squad; Agent is still the resolved leader
-	SquadName                string               `json:"squad_name,omitempty"`              // display name for the picker squad
+	SquadID                  string               `json:"squad_id,omitempty"`                // validated leader context for issue tasks or a quick-create squad picker
+	SquadName                string               `json:"squad_name,omitempty"`              // display name for that squad
 	ParentIssueID            string               `json:"parent_issue_id,omitempty"`         // for quick-create tasks opened from "Add sub issue" — UUID of the parent issue the new issue should be filed under
 	ParentIssueIdentifier    string               `json:"parent_issue_identifier,omitempty"` // human-readable identifier (e.g. MUL-123) of the quick-create parent issue, resolved on claim for prompt context
 	// RequestingUserName + RequestingUserProfileDescription mirror the user
@@ -1463,6 +1465,15 @@ func (h *Handler) CreateAgent(w http.ResponseWriter, r *http.Request) {
 	// Pi has a fixed token universe and a daemon-discovered per-model subset.
 	// Per-model gaps are enforced by the daemon at execution time (MUL-2339):
 	// combination-invalid values are logged and omitted from the invocation.
+	if !validateNativeAgentOptions(w, runtime.Provider, req.RuntimeConfig, req.CustomArgs, req.ThinkingLevel, req.ServiceTier) {
+		return
+	}
+	if !h.authorizeNativeRuntimeConfig(w, r, runtime, req.RuntimeConfig) {
+		return
+	}
+	if !h.validateNativeAgentModel(w, r, runtime.WorkspaceID, runtime.Provider, req.Model) {
+		return
+	}
 	if !agent.IsKnownThinkingValue(runtime.Provider, req.ThinkingLevel) {
 		writeError(w, http.StatusBadRequest, thinkingLevelRejection(runtime.Provider, req.ThinkingLevel))
 		return
@@ -1567,6 +1578,16 @@ func (h *Handler) CreateAgent(w http.ResponseWriter, r *http.Request) {
 	}
 	defer tx.Rollback(r.Context())
 	qtx := h.Queries.WithTx(tx)
+	if runtime.Provider == "native" {
+		var locked string
+		if tx.QueryRow(r.Context(), `SELECT id::text FROM workspace WHERE id=$1 FOR UPDATE`, wsUUID).Scan(&locked) != nil {
+			writeError(w, 404, "workspace not found")
+			return
+		}
+		if !h.validateNativeAgentModel(w, r, wsUUID, runtime.Provider, req.Model) {
+			return
+		}
+	}
 
 	created, err := qtx.CreateAgent(r.Context(), db.CreateAgentParams{
 		WorkspaceID:              wsUUID,
@@ -2052,13 +2073,54 @@ func (h *Handler) UpdateAgent(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.Model != nil {
 		params.Model = pgtype.Text{String: *req.Model, Valid: true}
-	} else if req.RuntimeID != nil && existing.Model.Valid && agent.ModelKnownIncompatibleWithProvider(targetProvider, existing.Model.String) {
+	} else if req.RuntimeID != nil && targetProvider != "native" && existing.Model.Valid && agent.ModelKnownIncompatibleWithProvider(targetProvider, existing.Model.String) {
 		// Model is runtime-native. When moving an agent across known provider
 		// families and the caller did not choose a replacement model, clear the
 		// old value so the new runtime falls back to its own default instead of
 		// receiving an obvious foreign model ID (e.g. Claude Code -> Codex).
+		// Native rebinding requires an explicit clear or the deployment model;
+		// its validation below must see inherited CLI overrides.
 		// Unknown/custom model strings are preserved by the helper.
 		params.Model = pgtype.Text{String: "", Valid: true}
+	}
+
+	if targetProvider == "" {
+		var resolved bool
+		targetProvider, resolved = h.resolveAgentProvider(r, existing.WorkspaceID, targetRuntimeID)
+		if !resolved {
+			writeError(w, http.StatusInternalServerError, "failed to resolve runtime for model validation")
+			return
+		}
+	}
+	config, args := json.RawMessage(existing.RuntimeConfig), json.RawMessage(existing.CustomArgs)
+	if params.RuntimeConfig != nil {
+		config = params.RuntimeConfig
+	}
+	if params.CustomArgs != nil {
+		args = params.CustomArgs
+	}
+	thinking, tier := existing.ThinkingLevel.String, existing.ServiceTier.String
+	if req.ThinkingLevel != nil {
+		thinking = *req.ThinkingLevel
+	}
+	if req.ServiceTier != nil {
+		tier = *req.ServiceTier
+	}
+	if !validateNativeAgentOptions(w, targetProvider, config, args, thinking, tier) {
+		return
+	}
+	if targetProvider == "native" && (req.RuntimeConfig != nil || req.RuntimeID != nil) {
+		rt, err := h.Queries.GetAgentRuntimeForWorkspace(r.Context(), db.GetAgentRuntimeForWorkspaceParams{ID: targetRuntimeID, WorkspaceID: existing.WorkspaceID})
+		if err != nil {
+			writeError(w, 500, "failed to load native runtime")
+			return
+		}
+		if !h.authorizeNativeRuntimeConfig(w, r, rt, config) {
+			return
+		}
+	}
+	if !h.validateNativeAgentModel(w, r, existing.WorkspaceID, targetProvider, effectiveModelValue(params, existing)) {
+		return
 	}
 
 	// thinking_level handling (MUL-2339). Tri-state semantics:
@@ -2232,7 +2294,37 @@ func (h *Handler) UpdateAgent(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	updated, err := h.Queries.UpdateAgent(r.Context(), params)
+	updateQueries := h.Queries
+	var modelTx pgx.Tx
+	if targetProvider == "native" && (req.Model != nil || req.RuntimeID != nil) {
+		var err error
+		modelTx, err = h.TxStarter.Begin(r.Context())
+		if err != nil {
+			writeError(w, 500, "cannot update agent model")
+			return
+		}
+		defer modelTx.Rollback(context.Background())
+		var locked string
+		if modelTx.QueryRow(r.Context(), `SELECT id::text FROM workspace WHERE id=$1 FOR UPDATE`, existing.WorkspaceID).Scan(&locked) != nil {
+			writeError(w, 404, "workspace not found")
+			return
+		}
+		if targetProvider == "native" && (req.RuntimeConfig != nil || req.RuntimeID != nil) {
+			rt, err := h.Queries.GetAgentRuntimeForWorkspace(r.Context(), db.GetAgentRuntimeForWorkspaceParams{ID: targetRuntimeID, WorkspaceID: existing.WorkspaceID})
+			if err != nil {
+				writeError(w, 500, "failed to load native runtime")
+				return
+			}
+			if !h.authorizeNativeRuntimeConfig(w, r, rt, config) {
+				return
+			}
+		}
+		if !h.validateNativeAgentModel(w, r, existing.WorkspaceID, targetProvider, effectiveModelValue(params, existing)) {
+			return
+		}
+		updateQueries = h.Queries.WithTx(modelTx)
+	}
+	updated, err := updateQueries.UpdateAgent(r.Context(), params)
 	if err != nil {
 		// Unique constraint on (workspace_id, name) — mirror CreateAgent and
 		// return a clear conflict instead of a 500 that leaks the raw
@@ -2251,6 +2343,11 @@ func (h *Handler) UpdateAgent(w http.ResponseWriter, r *http.Request) {
 		}
 		slog.Warn("update agent failed", append(logger.RequestAttrs(r), "error", err, "agent_id", id)...)
 		writeError(w, http.StatusInternalServerError, "failed to update agent")
+		return
+	}
+
+	if modelTx != nil && modelTx.Commit(r.Context()) != nil {
+		writeError(w, 500, "cannot commit agent model")
 		return
 	}
 

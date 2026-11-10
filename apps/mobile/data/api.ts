@@ -1,3 +1,4 @@
+import { PasswordLoginResponseSchema } from "@multica/core/api/schemas";
 /**
  * Mobile-owned fetch wrapper. Mirrors the surface area of
  * packages/core/api/client.ts that mobile actually uses, but lives in
@@ -44,6 +45,7 @@ import type {
   Reaction,
   ReorderPinsRequest,
   RuntimeDevice,
+  RuntimeModelListRequest,
   SearchIssuesResponse,
   SearchProjectsResponse,
   ListIssueStatusesResponse,
@@ -61,6 +63,8 @@ import type {
   WorkspaceSubscriptionSummary,
 } from "@multica/core/types";
 import {
+  RuntimeModelListRequestSchema,
+  MALFORMED_RUNTIME_MODEL_LIST_REQUEST,
   AppConfigSchema,
   EMPTY_APP_CONFIG,
   EMPTY_REFRESH_SESSION_RESPONSE,
@@ -386,18 +390,22 @@ class ApiClient {
   }
 
   // --- Auth ---
-  async sendCode(email: string): Promise<void> {
-    await this.fetch<void>("/auth/send-code", {
-      method: "POST",
-      body: JSON.stringify({ email }),
-    });
+  async passwordLogin(username: string, password: string): Promise<LoginResponse> {
+    return this.passwordAccount("login", { username, password });
   }
 
-  async verifyCode(email: string, code: string): Promise<LoginResponse> {
-    return this.fetch<LoginResponse>("/auth/verify-code", {
-      method: "POST",
-      body: JSON.stringify({ email, code }),
-    });
+  async registerAccount(username: string, password: string, email?: string): Promise<LoginResponse> {
+    return this.passwordAccount("register", { username, password, email });
+  }
+
+  private async passwordAccount(action: "login" | "register", input: { username: string; password: string; email?: string }): Promise<LoginResponse> {
+    const raw = await this.fetch<unknown>(`/auth/${action}`, { method: "POST", body: JSON.stringify(input) });
+    const result = parseWithFallback<LoginResponse | null>(
+      PasswordLoginResponseSchema.safeParse(raw).success ? raw : null,
+      PasswordLoginResponseSchema, null, { endpoint: `password${action}` },
+    );
+    if (!result) throw new Error("Invalid sign-in response");
+    return result;
   }
 
   /**
@@ -598,6 +606,16 @@ class ApiClient {
     return parseWithFallback(raw, RuntimeListSchema, EMPTY_RUNTIME_LIST, {
       endpoint: "listRuntimes",
     });
+  }
+
+  async nativeModel(runtimeId: string, opts?: { signal?: AbortSignal }): Promise<RuntimeModelListRequest> {
+    return this.fetchValidatedWith(
+      `/api/runtimes/${encodeURIComponent(runtimeId)}/models`,
+      RuntimeModelListRequestSchema,
+      { ...MALFORMED_RUNTIME_MODEL_LIST_REQUEST, runtime_id: runtimeId },
+      { method: "POST" },
+      { signal: opts?.signal, endpoint: "nativeModel" },
+    );
   }
 
   // Workspace-wide active agent tasks + each agent's most recent terminal —

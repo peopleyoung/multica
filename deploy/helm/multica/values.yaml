@@ -27,8 +27,7 @@ images:
 #     --from-literal=POSTGRES_PASSWORD="$(openssl rand -hex 16)" \
 #     --from-literal=RESEND_API_KEY="" \
 #     --from-literal=GOOGLE_CLIENT_SECRET="" \
-#     --from-literal=CLOUDFRONT_PRIVATE_KEY="" \
-#     --from-literal=MULTICA_DEV_VERIFICATION_CODE=""
+#     --from-literal=CLOUDFRONT_PRIVATE_KEY=""
 #
 # External postgres (postgres.external.enabled=true):
 #   Replace POSTGRES_PASSWORD with DATABASE_URL pointing at your external cluster.
@@ -37,8 +36,7 @@ images:
 #     --from-literal=DATABASE_URL="postgres://user:pass@host:5432/multica?sslmode=require" \
 #     --from-literal=RESEND_API_KEY="" \
 #     --from-literal=GOOGLE_CLIENT_SECRET="" \
-#     --from-literal=CLOUDFRONT_PRIVATE_KEY="" \
-#     --from-literal=MULTICA_DEV_VERIFICATION_CODE=""
+#     --from-literal=CLOUDFRONT_PRIVATE_KEY=""
 #
 # The chart references this Secret by name; it does not template it, so real
 # values never need to land in git.

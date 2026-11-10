@@ -84,6 +84,9 @@ func (h *Handler) CreateAgentBuilderSession(w http.ResponseWriter, r *http.Reque
 	flowID := uuid.NewString()
 	ownerUUID := parseUUID(userID)
 	model := strings.TrimSpace(req.Model)
+	if !h.validateNativeAgentModel(w, r, workspaceUUID, runtime.Provider, model) {
+		return
+	}
 	tx, err := h.TxStarter.Begin(r.Context())
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to start agent builder session")
@@ -101,6 +104,10 @@ func (h *Handler) CreateAgentBuilderSession(w http.ResponseWriter, r *http.Reque
 			return
 		}
 		writeError(w, http.StatusInternalServerError, "failed to lock workspace")
+		return
+	}
+
+	if !h.validateNativeAgentModel(w, r, workspaceUUID, runtime.Provider, model) {
 		return
 	}
 

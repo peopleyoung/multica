@@ -52,67 +52,6 @@ func changeSignupInvitation(t *testing.T, id, state string) {
 	}
 }
 
-func TestSendCodeInvitationSignupGate(t *testing.T) {
-	for _, state := range []string{"pending", "expired", "accepted", "declined", "revoked", "missing"} {
-		t.Run(state, func(t *testing.T) {
-			email := "invite-signup-" + state + "@example.com"
-			if state != "missing" {
-				id := signupInvitation(t, email)
-				changeSignupInvitation(t, id, state)
-			}
-			dbfx.Cleanup(t, `DELETE FROM verification_code WHERE email = $1`, email)
-			h := restrictSignupHandler(t)
-			want := http.StatusForbidden
-			if state == "pending" {
-				want = http.StatusOK
-			}
-			req := testutil.JSONRequest(http.MethodPost, "/auth/send-code", map[string]string{"email": " " + strings.ToUpper(email) + " "})
-			testutil.Call(t, h.SendCode, req).Want(want)
-		})
-	}
-}
-
-func TestVerifyCodeRechecksSignupInvitation(t *testing.T) {
-	for _, state := range []string{"pending", "expired", "revoked", "declined", "accepted"} {
-		t.Run(state, func(t *testing.T) {
-			email := "invite-recheck-" + state + "@example.com"
-			id := signupInvitation(t, email)
-			dbfx.Cleanup(t, `DELETE FROM "user" WHERE email = $1`, email)
-			dbfx.Cleanup(t, `DELETE FROM verification_code WHERE email = $1`, email)
-			h := restrictSignupHandler(t)
-			testutil.Call(t, h.SendCode, testutil.JSONRequest(http.MethodPost, "/auth/send-code", map[string]string{"email": email})).Want(http.StatusOK)
-			code, err := h.Queries.GetLatestVerificationCode(context.Background(), email)
-			if err != nil {
-				t.Fatal(err)
-			}
-			changeSignupInvitation(t, id, state)
-			want := http.StatusForbidden
-			if state == "pending" {
-				want = http.StatusOK
-			}
-			resp := testutil.Call(t, h.VerifyCode, testutil.JSONRequest(http.MethodPost, "/auth/verify-code", map[string]string{"email": email, "code": code.Code})).Want(want)
-			count := dbfx.Count(t, `SELECT count(*) FROM "user" WHERE email = $1`, email)
-			if state != "pending" {
-				if count != 0 || len(resp.Result().Cookies()) != 0 {
-					t.Fatal("invalidated invitation created an account or authenticated session")
-				}
-				return
-			}
-			if count != 1 {
-				t.Fatalf("expected one new account, got %d", count)
-			}
-			if n := dbfx.Count(t, `SELECT count(*) FROM member WHERE user_id = (SELECT id FROM "user" WHERE email = $1)`, email); n != 0 {
-				t.Fatal("signup must not accept the invitation or grant workspace membership")
-			}
-			changeSignupInvitation(t, id, "revoked")
-			_, isNew, err := h.findOrCreateUser(context.Background(), email)
-			if err != nil || isNew {
-				t.Fatalf("revocation must not block the existing account: isNew=%t, err=%v", isNew, err)
-			}
-		})
-	}
-}
-
 func TestGoogleLoginInvitationSignup(t *testing.T) {
 	t.Setenv("GOOGLE_CLIENT_ID", "test-client")
 	t.Setenv("GOOGLE_CLIENT_SECRET", "test-secret")
@@ -168,22 +107,16 @@ func (m failingSignupInvitationDB) QueryRow(ctx context.Context, sql string, arg
 func TestSignupInvitationLookupFailure(t *testing.T) {
 	t.Setenv("GOOGLE_CLIENT_ID", "test-client")
 	t.Setenv("GOOGLE_CLIENT_SECRET", "test-secret")
-	for _, path := range []string{"send-code", "verify-code", "google"} {
+	for _, path := range []string{"google"} {
 		t.Run(path, func(t *testing.T) {
 			email := "invite-lookup-error-" + path + "@example.com"
 			signupInvitation(t, email)
 			h := *testHandler
 			h.cfg = Config{AllowSignup: false}
 			h.Queries = db.New(failingSignupInvitationDB{testPool})
-			handler := h.SendCode
+			handler := h.GoogleLogin
 			body := map[string]string{"email": email}
 			switch path {
-			case "verify-code":
-				handler = h.VerifyCode
-				body["code"] = "123456"
-				dbfx.Insert(t, "verification_code", testutil.Cols{
-					"email": email, "code": body["code"], "expires_at": testutil.Raw("now() + interval '10 minutes'"),
-				})
 			case "google":
 				handler = h.GoogleLogin
 				body = map[string]string{"code": "test-code", "redirect_uri": "http://localhost/auth/callback"}

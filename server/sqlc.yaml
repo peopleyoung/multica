@@ -11,6 +11,12 @@ sql:
         emit_json_tags: true
         emit_empty_slices: true
         overrides:
+          - column: "agent_task_queue.native_model_config"
+            go_struct_tag: 'json:"-"'
+          - column: "workspace_model.api_key_encrypted"
+            go_struct_tag: 'json:"-"'
+          - column: "user.password_hash"
+            go_struct_tag: 'json:"-"'
           - column: "issue_wakeup.condition"
             go_type: "encoding/json.RawMessage"
             nullable: true

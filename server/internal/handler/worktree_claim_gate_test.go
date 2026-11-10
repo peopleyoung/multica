@@ -552,16 +552,16 @@ func TestWorktreeClaimGateCancelPersistsReason(t *testing.T) {
 func seedWorktreeGateClaimFixture(t *testing.T, ctx context.Context, label, daemonID, cliVersion string) (runtimeID, taskID string) {
 	t.Helper()
 
-	metadata := "{}"
+	metadata := `{"capabilities":["native-runtime-v1"]}`
 	if cliVersion != "" {
-		metadata = `{"cli_version":"` + cliVersion + `"}`
+		metadata = `{"capabilities":["native-runtime-v1"],"cli_version":"` + cliVersion + `"}`
 	}
 	if err := testPool.QueryRow(ctx, `
 		INSERT INTO agent_runtime (
 			workspace_id, daemon_id, name, runtime_mode, provider,
 			status, device_info, metadata, last_seen_at, visibility, owner_id
 		)
-		VALUES ($1, $2, $3, 'local', 'handler_test_runtime', 'online', 'worktree gate fixture', $4::jsonb, now(), 'private', $5)
+		VALUES ($1, $2, $3, 'local', 'native', 'online', 'worktree gate fixture', $4::jsonb, now(), 'private', $5)
 		RETURNING id
 	`, testWorkspaceID, daemonID, label+" runtime", metadata, testUserID).Scan(&runtimeID); err != nil {
 		t.Fatalf("setup: create runtime: %v", err)
@@ -719,7 +719,7 @@ func TestClaimTask_WorktreeGateAllowsCurrentRuntime(t *testing.T) {
 
 	w := httptest.NewRecorder()
 	req := newDaemonTokenRequest("POST", "/api/daemon/runtimes/"+runtimeID+"/claim", nil, testWorkspaceID, daemonID)
-	req.Header.Set("X-Client-Capabilities", protocol.DaemonCapabilityLocalWorktreeV1)
+	req.Header.Set("X-Client-Capabilities", protocol.DaemonCapabilityLocalWorktreeV1+",native-runtime-v1")
 	req = withURLParam(req, "runtimeId", runtimeID)
 	testHandler.ClaimTaskByRuntime(w, req)
 
@@ -993,13 +993,13 @@ func TestDaemonRegisterPersistsCapabilities(t *testing.T) {
 			"daemon_id":    daemonID,
 			"device_name":  "capability-roundtrip-device",
 			"runtimes": []map[string]any{
-				{"name": "cap-runtime", "type": "claude", "version": "1.0.0", "status": "online"},
+				{"name": "cap-runtime", "type": "native", "version": "1.0.0", "status": "online"},
 			},
 		}, testWorkspaceID, daemonID)
 		if capabilities != "" {
-			req.Header.Set("X-Client-Capabilities", capabilities)
+			req.Header.Set("X-Client-Capabilities", capabilities+",native-runtime-v1")
 		} else {
-			req.Header.Del("X-Client-Capabilities")
+			req.Header.Set("X-Client-Capabilities", "native-runtime-v1")
 		}
 		testHandler.DaemonRegister(w, req)
 		if w.Code != http.StatusOK {

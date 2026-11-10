@@ -190,6 +190,7 @@ beforeEach(() => {
 
 describe("AgentOverviewPane MCP tab visibility", () => {
   it.each([
+    ["Multica Native", "native"],
     ["Claude", "claude"],
     ["Codex", "codex"],
     ["Cursor", "cursor"],
@@ -284,6 +285,18 @@ describe("AgentOverviewPane Environment tab visibility", () => {
     expect(
       screen.queryByRole("tab", { name: /^Environment$/i }),
     ).not.toBeInTheDocument();
+  });
+
+  it("exposes native runtime configuration without legacy CLI options", () => {
+    renderPane([makeRuntime("native")]);
+    openSettings();
+    expect(
+      screen.queryByRole("tab", { name: /^Custom Args$/i }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("tab", { name: /^Routing$/i }),
+    ).not.toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: /^Runtime configuration$/i })).toBeInTheDocument();
   });
 });
 

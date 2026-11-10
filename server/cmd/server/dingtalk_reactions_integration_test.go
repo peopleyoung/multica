@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/http/httptest"
 	"slices"
 	"strings"
 	"sync"
@@ -15,13 +16,18 @@ import (
 	"time"
 
 	"github.com/multica-ai/multica/server/internal/analytics"
+	"github.com/multica-ai/multica/server/internal/auth"
+	"github.com/multica-ai/multica/server/internal/daemon"
 	"github.com/multica-ai/multica/server/internal/events"
+	"github.com/multica-ai/multica/server/internal/handler"
 	"github.com/multica-ai/multica/server/internal/integrations/channel"
 	"github.com/multica-ai/multica/server/internal/integrations/dingtalk"
 	"github.com/multica-ai/multica/server/internal/realtime"
 	dbfx "github.com/multica-ai/multica/server/internal/testutil"
 	"github.com/multica-ai/multica/server/internal/util/secretbox"
+	"github.com/multica-ai/multica/server/pkg/agent"
 	"github.com/multica-ai/multica/server/pkg/dbid"
+	"github.com/multica-ai/multica/server/pkg/llm"
 	"github.com/multica-ai/multica/server/pkg/protocol"
 )
 
@@ -32,6 +38,19 @@ func (f dingTalkReactionTransport) RoundTrip(r *http.Request) (*http.Response, e
 // Exercise the actual server assembly: the inbound notifier and outbound bus
 // subscriber must share the same local source cache and reaction lifecycle.
 func TestDingTalkReactionsThroughServerRouter(t *testing.T) {
+	runDingTalkReactionLifecycle(t, false)
+}
+
+func TestNativeDingTalkReplyThroughServerRouter(t *testing.T) {
+	runDingTalkReactionLifecycle(t, true)
+}
+
+func runDingTalkReactionLifecycle(t *testing.T, native bool) {
+	t.Helper()
+	// This test owns the DingTalk transport only. Disable unrelated asynchronous
+	// title inference before swapping the global client below.
+	t.Setenv("MULTICA_LLM_API_KEY", "")
+	t.Setenv("MULTICA_LLM_BASE_URL", "")
 	key := bytes.Repeat([]byte{0x83}, secretbox.KeySize)
 	t.Setenv("MULTICA_DINGTALK_SECRET_KEY", base64.StdEncoding.EncodeToString(key))
 	box, err := secretbox.New(key)
@@ -48,7 +67,18 @@ func TestDingTalkReactionsThroughServerRouter(t *testing.T) {
 		t.Fatal(err)
 	}
 	fx := dbfx.New(testPool, testWorkspaceID, testUserID)
-	agentID := fx.Agent(t, "DingTalk reaction fixture", fx.Runtime(t, "DingTalk fixture runtime"))
+	machine, daemonToken := "native-dingtalk-"+dbid.NewV7().String(), "mdt_"+dbid.NewV7().String()
+	runtimeCols := dbfx.Cols{}
+	if native {
+		runtimeCols["provider"], runtimeCols["daemon_id"] = "native", machine
+	}
+	runtimeID := fx.Runtime(t, "DingTalk fixture runtime", runtimeCols)
+	agentID := fx.Agent(t, "DingTalk reaction fixture", runtimeID)
+	if native {
+		fx.Insert(t, "daemon_token", dbfx.Cols{"workspace_id": testWorkspaceID, "daemon_id": machine, "token_hash": auth.HashToken(daemonToken), "expires_at": time.Now().Add(time.Hour)})
+		fx.Cleanup(t, "DELETE FROM native_session WHERE agent_id=$1", agentID)
+		fx.Cleanup(t, "DELETE FROM task_token WHERE agent_id=$1", agentID)
+	}
 	installation := fx.Insert(t, "channel_installation", dbfx.Cols{"workspace_id": testWorkspaceID, "agent_id": agentID, "channel_type": "dingtalk", "config": string(config), "installer_user_id": testUserID, "status": "active"})
 	fx.Insert(t, "channel_user_binding", dbfx.Cols{"installation_id": installation, "workspace_id": testWorkspaceID, "channel_type": "dingtalk", "channel_user_id": "sender", "multica_user_id": testUserID})
 	fx.Cleanup(t, "DELETE FROM channel_inbound_dedup WHERE installation_id = $1", installation)
@@ -101,8 +131,38 @@ func TestDingTalkReactionsThroughServerRouter(t *testing.T) {
 		return &http.Response{StatusCode: http.StatusOK, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(response))}, nil
 	})}
 	t.Cleanup(func() { http.DefaultClient = originalClient })
+	modelCalls := 0
+	var nativeModel *llm.Client
+	if native {
+		upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			var input struct {
+				Model    string
+				Stream   bool
+				Messages []struct{ Role, Content string }
+			}
+			if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
+				t.Error(err)
+			}
+			if !input.Stream {
+				w.Header().Set("Content-Type", "application/json")
+				fmt.Fprint(w, `{"choices":[{"index":0,"message":{"role":"assistant","content":"Channel fixture"},"finish_reason":"stop"}]}`)
+				return
+			}
+			modelCalls++
+			if input.Model != "fixture-model" || len(input.Messages) == 0 || !strings.Contains(input.Messages[len(input.Messages)-1].Content, "question") {
+				t.Error("channel run lost the fixed model or inbound message")
+			}
+			w.Header().Set("Content-Type", "text/event-stream")
+			fmt.Fprint(w, "data: {\"choices\":[{\"index\":0,\"delta\":{\"content\":\"answer\"},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n")
+		}))
+		defer upstream.Close()
+		nativeModel = llm.New(llm.Config{BaseURL: upstream.URL, DefaultModel: "fixture-model", HTTPClient: originalClient, Capabilities: llm.Capabilities{StreamingToolCalls: true, ContextTokens: 131072, MaxOutputTokens: 2048, MaxToolArgumentBytes: 65536, MaxTools: 32}})
+	}
 	bus := events.New()
-	_, h := NewRouterWithOptions(testPool, realtime.NewHub(), bus, analytics.NoopClient{}, nil, RouterOptions{})
+	router, h := NewRouterWithOptions(testPool, realtime.NewHub(), bus, analytics.NoopClient{}, nil, RouterOptions{LLMCapabilities: llm.Capabilities{StreamingToolCalls: true, ContextTokens: 131072, MaxOutputTokens: 2048, MaxToolArgumentBytes: 65536, MaxTools: 32}})
+	if native {
+		h.LLM = nativeModel
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	raw, err := json.Marshal(map[string]string{"app_id": appID, "current_text": "question"})
@@ -140,7 +200,52 @@ func TestDingTalkReactionsThroughServerRouter(t *testing.T) {
 	if err := testPool.QueryRow(ctx, "SELECT id FROM agent_task_queue WHERE chat_session_id=$1", sessionID).Scan(&taskID); err != nil {
 		t.Fatal(err)
 	}
-	bus.Publish(events.Event{Type: protocol.EventChatDone, TaskID: taskID, ChatSessionID: sessionID, Payload: protocol.ChatDonePayload{Content: "answer"}})
+	if native {
+		call := func(method, path string, body any) *http.Request {
+			req := dbfx.JSONRequest(method, path, body)
+			req.Header.Set("Authorization", "Bearer "+daemonToken)
+			req.Header.Set("X-Workspace-ID", testWorkspaceID)
+			req.Header.Set("X-Client-Capabilities", protocol.DaemonCapabilityNativeRuntimeV1)
+			return req
+		}
+		// Redelivering the provider event must preserve one conversation/run.
+		if err := h.ChannelRouter.Handle(ctx, msg); err != nil {
+			t.Fatal(err)
+		}
+		var claimed struct{ Tasks []daemon.Task }
+		dbfx.Call(t, router.ServeHTTP, call(http.MethodPost, "/api/daemon/tasks/claim", map[string]any{"daemon_id": machine, "runtime_ids": []string{runtimeID}, "max_tasks": 1})).Want(http.StatusOK).JSON(&claimed)
+		if len(claimed.Tasks) != 1 || claimed.Tasks[0].ID != taskID || claimed.Tasks[0].ChatChannelType != "dingtalk" {
+			t.Fatalf("channel did not claim its native conversation: %+v", claimed)
+		}
+		task := claimed.Tasks[0]
+		dbfx.Call(t, router.ServeHTTP, call(http.MethodPost, "/api/daemon/tasks/"+taskID+"/start", map[string]any{"runtime_id": runtimeID, "dispatched_at": task.DispatchedAt})).Want(http.StatusOK)
+		api := httptest.NewServer(router)
+		defer api.Close()
+		dir := t.TempDir()
+		backend, closeBackend, err := daemon.NewNativeBackend(ctx, daemon.NewClient(api.URL), task, daemon.NativeBackendOptions{WorkDir: dir, JournalDir: t.TempDir()})
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer closeBackend()
+		session, err := backend.Execute(ctx, daemon.BuildPrompt(task, "native"), agent.ExecOptions{Cwd: dir, SystemPrompt: task.Agent.Instructions})
+		if err != nil {
+			t.Fatal(err)
+		}
+		for range session.Messages {
+		}
+		result := <-session.Result
+		if result.Status != "completed" || result.Output != "answer" || modelCalls != 1 {
+			t.Fatalf("native channel reply failed: %+v model_calls=%d", result, modelCalls)
+		}
+		for range 2 {
+			dbfx.Call(t, router.ServeHTTP, call(http.MethodPost, "/api/daemon/tasks/"+taskID+"/complete", handler.TaskCompleteRequest{Output: result.Output, SessionID: result.SessionID, WorkDir: dir})).Want(http.StatusOK)
+		}
+		if got := fx.Count(t, "SELECT count(*) FROM agent_task_queue WHERE chat_session_id=$1", sessionID); got != 1 {
+			t.Fatalf("duplicate channel event created %d runs", got)
+		}
+	} else {
+		bus.Publish(events.Event{Type: protocol.EventChatDone, TaskID: taskID, ChatSessionID: sessionID, Payload: protocol.ChatDonePayload{Content: "answer"}})
+	}
 	mu.Lock()
 	defer mu.Unlock()
 	want := []string{"/v1.0/robot/emotion/reply:收到:source", "answer", "/v1.0/robot/emotion/recall:收到:source", "/v1.0/robot/emotion/reply:Done:source"}

@@ -39,8 +39,8 @@ export interface AuthState {
   expired: boolean;
 
   retryAuthentication: () => void;
-  sendCode: (email: string) => Promise<void>;
-  verifyCode: (email: string, code: string) => Promise<User>;
+  passwordLogin: (username: string, password: string) => Promise<User>;
+  registerAccount: (username: string, password: string, email?: string) => Promise<User>;
   loginWithGoogle: (code: string, redirectUri: string) => Promise<User>;
   loginWithToken: (token: string) => Promise<User>;
   logout: () => void;
@@ -68,14 +68,22 @@ export function createAuthStore(options: AuthStoreOptions) {
       }));
     },
 
-    sendCode: async (email: string) => {
-      await api.sendCode(email);
-    },
-
-    verifyCode: async (email: string, code: string) => {
-      const { token, user } = await api.verifyCode(email, code);
+    passwordLogin: async (username, password) => {
+      const { token, user } = await api.passwordLogin(username, password);
       if (!cookieAuth) {
         // Token mode: persist for Electron / legacy.
+        storage.setItem("multica_token", token);
+        api.setToken(token);
+      }
+      onLogin?.();
+      identifyAnalytics(user.id, { email: user.email, name: user.name });
+      set({ user, isLoading: false, status: "authenticated", expired: false });
+      return user;
+    },
+
+    registerAccount: async (username, password, email) => {
+      const { token, user } = await api.registerAccount(username, password, email);
+      if (!cookieAuth) {
         storage.setItem("multica_token", token);
         api.setToken(token);
       }

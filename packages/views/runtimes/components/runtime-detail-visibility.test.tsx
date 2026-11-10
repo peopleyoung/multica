@@ -153,7 +153,7 @@ function makeRuntime(overrides: Partial<AgentRuntime>): AgentRuntime {
     daemon_id: null,
     name: "Local Runtime",
     runtime_mode: "local",
-    provider: "claude",
+    provider: "native",
     launch_header: "",
     status: "online",
     device_info: "host.local",

@@ -640,60 +640,6 @@ func TestPrepareLocalWorktreeFailsWhenUntrackedReplayIsTruncated(t *testing.T) {
 	}
 }
 
-// Worktree tasks get a fresh env root per task ID, exactly like in_place ones
-// (shouldReusePriorWorkdir refuses any local assignment). So they need the same
-// per-issue Codex session store: without it, each comment turn on an issue
-// starts a new empty CODEX_HOME, the prior rollout is invisible, and the agent
-// silently loses the conversation it was having with the user.
-func TestPrepareWorktreeModeUsesPerIssueCodexSessionStore(t *testing.T) {
-	repo := newTestRepo(t)
-	workspacesRoot := t.TempDir()
-	codexHome := t.TempDir()
-	t.Setenv("CODEX_HOME", codexHome)
-
-	prepareTurn := func(taskID string) *Environment {
-		t.Helper()
-		env, err := Prepare(PrepareParams{
-			WorkspacesRoot: workspacesRoot,
-			WorkspaceID:    "ws-1",
-			TaskID:         taskID,
-			AgentName:      "J",
-			Provider:       "codex",
-			LocalWorktree:  &LocalWorktreeParams{LocalPath: repo},
-			Task:           TaskContextForEnv{IssueID: "issue-1", AgentID: "agent-1", AgentName: "J"},
-		}, worktreeTestLogger())
-		if err != nil {
-			t.Fatalf("Prepare(%s): %v", taskID, err)
-		}
-		return env
-	}
-
-	// Two turns on the same issue, different task IDs — the shape of a
-	// follow-up comment.
-	first := prepareTurn("aaaa1111-2222-3333-4444-5555666677aa")
-	second := prepareTurn("bbbb1111-2222-3333-4444-5555666677bb")
-
-	sessionsOf := func(env *Environment) string {
-		t.Helper()
-		target, err := filepath.EvalSymlinks(filepath.Join(env.CodexHome, "sessions"))
-		if err != nil {
-			t.Fatalf("resolve sessions dir: %v", err)
-		}
-		return target
-	}
-
-	firstSessions := sessionsOf(first)
-	secondSessions := sessionsOf(second)
-	if firstSessions != secondSessions {
-		t.Errorf("each turn got its own sessions dir, so Codex cannot resume:\n first  %s\n second %s",
-			firstSessions, secondSessions)
-	}
-	// And it must be the stable per-issue store, not a task-local directory.
-	if strings.Contains(firstSessions, taskKey("aaaa1111-2222-3333-4444-5555666677aa")) {
-		t.Errorf("sessions dir is task-scoped (%s); it will not survive the next turn", firstSessions)
-	}
-}
-
 // The daemon runs its sidecar cleanup before Finalize commits. If that cleanup
 // fails, committing anyway would deliver a branch whose content is Multica's
 // own runtime files — the exact leak this mode promises to prevent. The abort

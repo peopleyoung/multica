@@ -233,6 +233,7 @@ describe("run outcome", () => {
   it("flags only failures that need a configuration change", () => {
     expect(failureNeedsAction({ status: "failed", failure_reason: "agent_error.provider_auth_or_access" })).toBe(true);
     expect(failureNeedsAction({ status: "failed", failure_reason: "runtime_access_denied" })).toBe(true);
+    expect(failureNeedsAction({ status: "failed", failure_reason: "native_tool_outcome_unknown" })).toBe(true);
     expect(failureNeedsAction({ status: "failed", failure_reason: "agent_error.provider_capacity_or_rate_limit" })).toBe(false);
     expect(failureNeedsAction({ status: "cancelled", failure_reason: "runtime_access_denied" })).toBe(false);
   });

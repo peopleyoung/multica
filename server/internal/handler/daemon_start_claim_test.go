@@ -19,15 +19,15 @@ func startClaimFixture(t *testing.T, status string) (string, string, time.Time) 
 	if testHandler == nil {
 		t.Fatal("PostgreSQL is required for start claim tests")
 	}
-	var agentID string
-	dbfx.QueryRow(t, `SELECT id FROM agent WHERE workspace_id=$1 LIMIT 1`, testWorkspaceID).Scan(&agentID)
 	issueID := dbfx.Issue(t, "start claim ownership")
+	runtimeID := dbfx.Runtime(t, "start claim native", testutil.Cols{"provider": "native", "daemon_id": "start-claim-test"})
+	agentID := dbfx.Agent(t, "start claim native", runtimeID)
 	generation := time.Date(2026, 9, 17, 9, 0, 0, 123456000, time.UTC)
 	taskID := dbfx.Task(t, agentID, testutil.Cols{
-		"issue_id": issueID, "runtime_id": testRuntimeID,
+		"issue_id": issueID, "runtime_id": runtimeID,
 		"status": status, "dispatched_at": generation,
 	})
-	return taskID, testRuntimeID, generation
+	return taskID, runtimeID, generation
 }
 
 func startClaimRequest(taskID, runtimeID string, generation time.Time) *http.Request {
@@ -171,11 +171,11 @@ func TestStartClaimInvalidBodiesAndLegacy(t *testing.T) {
 		map[string]string{"runtime_id": "invalid", "dispatched_at": generation.Format(time.RFC3339Nano)},
 		map[string]string{"runtime_id": runtimeID, "dispatched_at": generation.Add(time.Nanosecond).Format(time.RFC3339Nano)},
 	} {
-		req := withURLParam(newDaemonTokenRequest("POST", "/start", body, testWorkspaceID, "legacy-test"), "taskId", id)
+		req := withURLParam(newDaemonTokenRequest("POST", "/start", body, testWorkspaceID, "start-claim-test"), "taskId", id)
 		testutil.Call(t, testHandler.StartTask, req).Want(http.StatusBadRequest)
 	}
-	for _, code := range []int{http.StatusOK, http.StatusBadRequest} {
-		req := withURLParam(newDaemonTokenRequest("POST", "/start", nil, testWorkspaceID, "legacy-test"), "taskId", id)
+	for _, code := range []int{http.StatusBadRequest, http.StatusBadRequest} {
+		req := withURLParam(newDaemonTokenRequest("POST", "/start", nil, testWorkspaceID, "start-claim-test"), "taskId", id)
 		testutil.Call(t, testHandler.StartTask, req).Want(code)
 	}
 }

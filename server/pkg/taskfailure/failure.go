@@ -192,6 +192,10 @@ const (
 	// settlement failures surface the same recovery guidance.
 	ReasonRuntimeAccessDenied Reason = "runtime_access_denied"
 
+	// An earlier native operation has no confirmed result. Neither automatic
+	// retry nor discarding the checkpoint can establish its external outcome.
+	ReasonNativeToolOutcomeUnknown Reason = "native_tool_outcome_unknown"
+
 	// Agent process side: failure surfaced by the agent CLI / SDK as
 	// an error string. Classify(rawError) is responsible for picking
 	// the right sub-reason from the string. IsAgentError returns true
@@ -291,6 +295,7 @@ var allReasons = []Reason{
 	ReasonEnvironmentPrepareFailed,
 	ReasonInvalidTaskIdentity,
 	ReasonRuntimeAccessDenied,
+	ReasonNativeToolOutcomeUnknown,
 
 	// Agent process side: provider errors.
 	ReasonAgentProviderAuthOrAccess,

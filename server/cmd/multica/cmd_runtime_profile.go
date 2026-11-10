@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"os"
-	"path/filepath"
+
 	"sort"
 	"strings"
 
@@ -34,7 +34,7 @@ import (
 
 var runtimeProfileCmd = &cobra.Command{
 	Use:   "profile",
-	Short: "Manage custom runtime profiles",
+	Short: "Inspect or remove historical runtime profiles",
 }
 
 var runtimeProfileListCmd = &cobra.Command{
@@ -161,114 +161,6 @@ func runRuntimeProfileList(cmd *cobra.Command, _ []string) error {
 	return nil
 }
 
-func runRuntimeProfileCreate(cmd *cobra.Command, _ []string) error {
-	family, _ := cmd.Flags().GetString("protocol-family")
-	commandName, _ := cmd.Flags().GetString("command-name")
-	displayName, _ := cmd.Flags().GetString("display-name")
-	description, _ := cmd.Flags().GetString("description")
-
-	runtimeType, _ := cmd.Flags().GetString("runtime-type")
-	runtimeType = strings.TrimSpace(runtimeType)
-	if runtimeType == "" && strings.TrimSpace(family) == "" {
-		return fmt.Errorf("--runtime-type or --protocol-family is required")
-	}
-	if runtimeType != "" {
-		resolved, ok := agent.RuntimeProtocolFamily(runtimeType)
-		if !ok {
-			return fmt.Errorf("unsupported --runtime-type %q", runtimeType)
-		}
-		if family != "" && family != resolved {
-			return fmt.Errorf("--protocol-family does not match --runtime-type")
-		}
-		family = resolved
-	}
-	if strings.TrimSpace(commandName) == "" {
-		return fmt.Errorf("--command-name is required")
-	}
-	if strings.TrimSpace(displayName) == "" {
-		return fmt.Errorf("--display-name is required")
-	}
-	if err := validateProtocolFamily(family); err != nil {
-		return err
-	}
-
-	client, err := newAPIClient(cmd)
-	if err != nil {
-		return err
-	}
-	workspaceID, err := requireWorkspaceID(cmd)
-	if err != nil {
-		return err
-	}
-
-	body := map[string]any{
-		"display_name":    displayName,
-		"protocol_family": family,
-		"command_name":    commandName,
-	}
-	if runtimeType != "" {
-		body["runtime_type"] = runtimeType
-		delete(body, "protocol_family")
-	}
-	if description != "" {
-		body["description"] = description
-	}
-
-	ctx, cancel := cli.APIContext(context.Background())
-	defer cancel()
-
-	var profile map[string]any
-	if err := client.PostJSON(ctx, runtimeProfilesPath(workspaceID), body, &profile); err != nil {
-		return fmt.Errorf("create runtime profile: %w", err)
-	}
-	return outputRuntimeProfile(cmd, profile)
-}
-
-func runRuntimeProfileUpdate(cmd *cobra.Command, args []string) error {
-	profileID := args[0]
-
-	body := map[string]any{}
-	if cmd.Flags().Changed("display-name") {
-		v, _ := cmd.Flags().GetString("display-name")
-		body["display_name"] = v
-	}
-	if cmd.Flags().Changed("command-name") {
-		v, _ := cmd.Flags().GetString("command-name")
-		body["command_name"] = v
-	}
-	if cmd.Flags().Changed("description") {
-		v, _ := cmd.Flags().GetString("description")
-		body["description"] = v
-	}
-	if cmd.Flags().Changed("enabled") {
-		v, _ := cmd.Flags().GetBool("enabled")
-		body["enabled"] = v
-	}
-
-	if len(body) == 0 {
-		return fmt.Errorf("no fields to update: pass at least one of --display-name, --command-name, --description, --enabled")
-	}
-
-	client, err := newAPIClient(cmd)
-	if err != nil {
-		return err
-	}
-	workspaceID, err := requireWorkspaceID(cmd)
-	if err != nil {
-		return err
-	}
-
-	ctx, cancel := cli.APIContext(context.Background())
-	defer cancel()
-
-	path := runtimeProfilesPath(workspaceID) + "/" + profileID
-	var profile map[string]any
-	if err := client.PatchJSON(ctx, path, body, &profile); err != nil {
-		return fmt.Errorf("update runtime profile: %w", err)
-	}
-	return outputRuntimeProfile(cmd, profile)
-}
-
 func runRuntimeProfileDelete(cmd *cobra.Command, args []string) error {
 	profileID := args[0]
 
@@ -304,65 +196,6 @@ func runRuntimeProfileDelete(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
-func runRuntimeProfileSetPath(cmd *cobra.Command, args []string) error {
-	if err := requireHumanLocalCommand("runtime profile set-path"); err != nil {
-		return err
-	}
-	profileID := args[0]
-	path, _ := cmd.Flags().GetString("path")
-	path = strings.TrimSpace(path)
-	if path == "" {
-		return fmt.Errorf("--path is required")
-	}
-	if !filepath.IsAbs(path) {
-		return fmt.Errorf("--path must be an absolute path, got %q", path)
-	}
-
-	profile := resolveProfile(cmd)
-	cfg, err := cli.LoadCLIConfigForProfile(profile)
-	if err != nil {
-		return fmt.Errorf("load CLI config: %w", err)
-	}
-	if cfg.ProfileCommandOverrides == nil {
-		cfg.ProfileCommandOverrides = map[string]string{}
-	}
-	cfg.ProfileCommandOverrides[profileID] = path
-	if err := cli.SaveCLIConfigForProfile(cfg, profile); err != nil {
-		return fmt.Errorf("save CLI config: %w", err)
-	}
-	fmt.Printf("Pinned runtime profile %s to %s on this machine.\n", profileID, path)
-	fmt.Println("Restart the daemon for the change to take effect.")
-	return nil
-}
-
-func runRuntimeProfileUnsetPath(cmd *cobra.Command, args []string) error {
-	if err := requireHumanLocalCommand("runtime profile unset-path"); err != nil {
-		return err
-	}
-	profileID := args[0]
-
-	profile := resolveProfile(cmd)
-	cfg, err := cli.LoadCLIConfigForProfile(profile)
-	if err != nil {
-		return fmt.Errorf("load CLI config: %w", err)
-	}
-	if _, ok := cfg.ProfileCommandOverrides[profileID]; !ok {
-		fmt.Printf("No per-machine path override set for runtime profile %s.\n", profileID)
-		return nil
-	}
-	delete(cfg.ProfileCommandOverrides, profileID)
-	if len(cfg.ProfileCommandOverrides) == 0 {
-		// Normalize back to nil so the key drops out of the saved JSON.
-		cfg.ProfileCommandOverrides = nil
-	}
-	if err := cli.SaveCLIConfigForProfile(cfg, profile); err != nil {
-		return fmt.Errorf("save CLI config: %w", err)
-	}
-	fmt.Printf("Removed per-machine path override for runtime profile %s.\n", profileID)
-	fmt.Println("Restart the daemon for the change to take effect.")
-	return nil
-}
-
 // outputRuntimeProfile renders a single profile honoring --output.
 func outputRuntimeProfile(cmd *cobra.Command, profile map[string]any) error {
 	output, _ := cmd.Flags().GetString("output")
@@ -388,4 +221,20 @@ func printRuntimeProfileTable(profiles []map[string]any) {
 	}
 	sort.Slice(rows, func(i, j int) bool { return rows[i][1] < rows[j][1] })
 	cli.PrintTable(os.Stdout, headers, rows)
+}
+
+func runRuntimeProfileCreate(cmd *cobra.Command, args []string) error {
+	return fmt.Errorf("external AI CLI profiles have been retired; use Multica Native")
+}
+
+func runRuntimeProfileUpdate(cmd *cobra.Command, args []string) error {
+	return fmt.Errorf("external AI CLI profiles have been retired; use Multica Native")
+}
+
+func runRuntimeProfileSetPath(cmd *cobra.Command, args []string) error {
+	return fmt.Errorf("external AI CLI profiles have been retired; use Multica Native")
+}
+
+func runRuntimeProfileUnsetPath(cmd *cobra.Command, args []string) error {
+	return fmt.Errorf("external AI CLI profiles have been retired; use Multica Native")
 }

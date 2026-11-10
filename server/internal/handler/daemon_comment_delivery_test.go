@@ -221,9 +221,9 @@ func claimCommentDeliveryFixture(t *testing.T, fixture commentDeliveryFixture, c
 	t.Helper()
 	w := httptest.NewRecorder()
 	req := newDaemonTokenRequest(http.MethodPost, "/api/daemon/runtimes/"+fixture.runtimeID+"/tasks/claim", nil,
-		testWorkspaceID, "comment-delivery-matrix")
+		testWorkspaceID, runtimeDaemonID(t, fixture.runtimeID))
 	if capabilities != "" {
-		req.Header.Set("X-Client-Capabilities", capabilities)
+		req.Header.Set("X-Client-Capabilities", capabilities+",native-runtime-v1")
 	}
 	req = withURLParam(req, "runtimeId", fixture.runtimeID)
 	testHandler.ClaimTaskByRuntime(w, req)
@@ -366,8 +366,8 @@ func testClaimRepairsDeletedTrigger(t *testing.T, deleteTriggerSQL string) {
 
 	w := httptest.NewRecorder()
 	req := newDaemonTokenRequest(http.MethodPost, "/api/daemon/runtimes/"+fixture.runtimeID+"/tasks/claim", nil,
-		testWorkspaceID, "stale-comment-plan-repair")
-	req.Header.Set("X-Client-Capabilities", protocol.DaemonCapabilityCoalescedCommentsV1)
+		testWorkspaceID, runtimeDaemonID(t, fixture.runtimeID))
+	req.Header.Set("X-Client-Capabilities", protocol.DaemonCapabilityCoalescedCommentsV1+",native-runtime-v1")
 	req = withURLParam(req, "runtimeId", fixture.runtimeID)
 	testHandler.ClaimTaskByRuntime(w, req)
 	if w.Code != http.StatusOK {
@@ -934,8 +934,8 @@ func TestClaimTaskByRuntime_FinalizationFailureRequeuesImmediately(t *testing.T)
 
 	w := httptest.NewRecorder()
 	req := newDaemonTokenRequest(http.MethodPost, "/api/daemon/runtimes/"+fixture.runtimeID+"/tasks/claim", nil,
-		testWorkspaceID, "comment-delivery-finalize-failure")
-	req.Header.Set("X-Client-Capabilities", protocol.DaemonCapabilityCoalescedCommentsV1)
+		testWorkspaceID, runtimeDaemonID(t, fixture.runtimeID))
+	req.Header.Set("X-Client-Capabilities", protocol.DaemonCapabilityCoalescedCommentsV1+",native-runtime-v1")
 	req = withURLParam(req, "runtimeId", fixture.runtimeID)
 	failingHandler.ClaimTaskByRuntime(w, req)
 	if w.Code != http.StatusInternalServerError {

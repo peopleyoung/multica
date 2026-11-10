@@ -57,6 +57,7 @@ const REASON_CLASS: Record<string, FailureClass> = {
   // got picked up, runner binary missing or too old.
   runtime_offline: "runtime",
   runtime_recovery: "runtime",
+  native_tool_outcome_unknown: "runtime",
   queued_expired: "runtime",
   "agent_error.runtime_missing_executable": "runtime",
   "agent_error.runtime_version_unsupported": "runtime",

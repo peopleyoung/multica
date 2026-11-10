@@ -219,6 +219,7 @@ export function AgentConfigurationPanel({
             </div>
             <ModelDropdown
               runtimeId={selectedRuntime?.id ?? null}
+              runtimeProvider={selectedRuntime?.provider}
               runtimeOnline={selectedRuntime?.status === "online"}
               value={draft.model}
               onChange={(value) => onChange(applyDraftModelChange(draft, value))}
@@ -232,12 +233,12 @@ export function AgentConfigurationPanel({
               already set and needs clearing), so an offline runtime, a failed
               discovery or an empty model shows nothing instead of an input
               that cannot be honoured. */}
-          <AgentExecutionOverrides
+          {selectedRuntime?.provider !== "native" && <AgentExecutionOverrides
             draft={draft}
             runtime={selectedRuntime}
             disabled={runtimeLocked}
             onChange={onChange}
-          />
+          />}
         </SettingsCard>
       </SettingsSection>
 

@@ -4,7 +4,7 @@ WHERE id = $1;
 
 -- name: GetUserByEmail :one
 SELECT * FROM "user"
-WHERE email = $1;
+WHERE email = $1 AND email_verified = true;
 
 -- name: GetUsersByIDs :many
 -- Batch lookup from the GLOBAL user table (not gated on membership, so departed
@@ -85,3 +85,15 @@ UPDATE "user" SET
     updated_at = now()
 WHERE id = $1
 RETURNING *;
+
+-- name: GetUserByUsername :one
+SELECT * FROM "user" WHERE lower(username) = lower($1);
+
+-- name: CreatePasswordUser :one
+INSERT INTO "user" (username, name, email, password_hash, email_verified)
+VALUES ($1, $2, $3, $4, false)
+RETURNING *;
+
+-- name: SetUserPasswordAccount :one
+UPDATE "user" SET username = $2, password_hash = $3, updated_at = now()
+WHERE id = $1 RETURNING *;

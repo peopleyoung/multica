@@ -8,9 +8,7 @@ package agent
 import (
 	"context"
 	"encoding/json"
-	"fmt"
-	"log/slog"
-	"strings"
+
 	"time"
 )
 
@@ -138,19 +136,6 @@ type ExecOptions struct {
 	piMcpExtensionPath string
 }
 
-// runContext derives the execution context for an agent subprocess from the
-// configured per-run timeout. A positive timeout imposes a hard wall-clock
-// deadline; a zero (or negative) timeout imposes NO deadline, leaving liveness
-// entirely to the daemon's inactivity watchdog so a session that keeps emitting
-// events is never killed merely for running long (MUL-3064). The caller owns
-// the returned CancelFunc and must call it to release resources.
-func runContext(ctx context.Context, timeout time.Duration) (context.Context, context.CancelFunc) {
-	if timeout > 0 {
-		return context.WithTimeout(ctx, timeout)
-	}
-	return context.WithCancel(ctx)
-}
-
 // Session represents a running agent execution.
 type Session struct {
 	// Supplement delivers an additional human instruction to the currently
@@ -158,6 +143,9 @@ type Session struct {
 	// Adapters bound their own transport calls; a hook-based adapter may wait
 	// for the next provider boundary until ctx or the execution is cancelled.
 	Supplement func(context.Context, string) error
+	// SupplementWithID durably accepts a server-owned input identity. Native
+	// sessions use it to deduplicate redelivery after an acknowledgement loss.
+	SupplementWithID func(context.Context, string, string) error
 	// SupplementReady reports whether Supplement currently targets a live,
 	// provider-confirmed turn. The daemon must not claim durable input before
 	// this becomes true: claiming during provider initialization would convert
@@ -249,11 +237,6 @@ type TokenUsage struct {
 	CostUSDTicks int64
 }
 
-// CostUSDTicksPerUSD is the scale of the provider-reported cost unit: xAI
-// reports whole ticks of 1e-10 USD, which keeps sub-cent turn costs exact in
-// int64 all the way to the database instead of drifting through float64.
-const CostUSDTicksPerUSD = 10_000_000_000
-
 // Result is the final outcome after an agent session completes.
 type Result struct {
 	Status     string // "completed", "failed", "aborted", "timeout", "cancelled"
@@ -308,42 +291,6 @@ type Result struct {
 	// its model catalog, and that the process tree was reaped afterwards.
 	// Like codexInitializeRetrySafe it is not part of the public contract.
 	codexStartupRefreshRetrySafe bool
-}
-
-// Config configures a Backend instance.
-type Config struct {
-	ExecutablePath string            // path to CLI binary (claude, codebuddy, codex, copilot, opencode, codearts, openclaw, hermes, pi, cursor, kimi, reasonix, dsh, kiro-cli, agy, qodercli, qoderclicn, traecli, grok, qwen, qwenpaw, mcode, dim, zeroclaw)
-	CLIVersion     string            // detected version paired with ExecutablePath; vendor-specific usage semantics also require BuiltinRuntime
-	Env            map[string]string // extra environment variables
-	Logger         *slog.Logger
-	TaskID         string
-	RuntimeID      string
-	DaemonVersion  string
-	CodexVersion   string
-	// BuiltinRuntime reports that ExecutablePath is the provider's own
-	// discovered binary rather than a custom runtime profile's command. A
-	// custom profile keeps its protocol family as the provider, so the
-	// provider name cannot distinguish the two: `protocol_family: hermes`
-	// with `command_name: jcode` arrives as "hermes" while being an
-	// unrelated implementation. Backends use this to scope
-	// compatibility exceptions that were verified against a specific
-	// vendor's binary; it defaults to false so an unset caller fails
-	// closed onto standard behavior.
-	BuiltinRuntime bool
-	// provider is the runtime/provider identity used in safe launch logs. New
-	// fills it from the protocol family; NewRuntime preserves the concrete
-	// built-in runtime identity instead (for example omp rather than pi).
-	provider string
-	// LaunchPrefix is the argv prefix that belongs to ExecutablePath itself —
-	// a custom runtime profile's fixed_args. It is spliced in directly after
-	// the executable, ahead of every argument a backend builds, because a
-	// wrapper's subcommand has to be consumed before the wrapped CLI's own
-	// flags mean anything (`ccms start q36` then `-p …`, GH #7046).
-	//
-	// Unlike ExtraArgs this is not opt-in: New filters it once and the
-	// Command boundary applies it to every process the package spawns, task
-	// launches and CLI probes alike. Backends never read it directly.
-	LaunchPrefix []string
 }
 
 // New creates a Backend for the given agent type.
@@ -432,84 +379,6 @@ var resumeRejectionUndetectable = map[string]bool{
 // "checked, not a rejection" for everything else.
 func ResumeRejectionUndetectable(agentType string) bool {
 	return resumeRejectionUndetectable[agentType]
-}
-
-func New(agentType string, cfg Config) (Backend, error) {
-	if cfg.Logger == nil {
-		cfg.Logger = slog.Default()
-	}
-	if cfg.provider == "" {
-		cfg.provider = agentType
-	}
-	// Filter the launch prefix here, at the one point that knows both the
-	// prefix and the protocol family. Doing it per-backend would be the same
-	// opt-in arrangement that let ExtraArgs rot: a family that forgot the call
-	// would accept a fixed_args `--output-format text` and break its own
-	// stream-json channel.
-	cfg.LaunchPrefix = filterLaunchPrefix(cfg.LaunchPrefix, agentType, cfg.Logger)
-
-	switch agentType {
-	case "claude":
-		return &claudeBackend{cfg: cfg}, nil
-	case "codebuddy":
-		return &codebuddyBackend{cfg: cfg}, nil
-	case "codex":
-		return &codexBackend{cfg: cfg}, nil
-	case "copilot":
-		return &copilotBackend{cfg: cfg}, nil
-	case "opencode":
-		return &opencodeBackend{cfg: cfg}, nil
-	case "codearts":
-		return newCodeArtsBackend(cfg)
-	case "deveco":
-		return &devecoBackend{cfg: cfg}, nil
-	case "openclaw":
-		return &openclawBackend{cfg: cfg}, nil
-	case "hermes":
-		return &hermesBackend{cfg: cfg}, nil
-	case "pi":
-		return &piBackend{cfg: cfg}, nil
-	case "cursor":
-		return &cursorBackend{cfg: cfg}, nil
-	case "kimi":
-		return &kimiBackend{cfg: cfg}, nil
-	case "reasonix":
-		return &reasonixBackend{cfg: cfg}, nil
-	case "dsh":
-		return &dshBackend{cfg: cfg}, nil
-	case "dim":
-		return &dimBackend{cfg: cfg}, nil
-	case "kiro":
-		return &kiroBackend{cfg: cfg}, nil
-	case "antigravity":
-		return &antigravityBackend{cfg: cfg}, nil
-	case "qoder", "qoderclicn":
-		return &qoderBackend{cfg: cfg, defaultExecutable: qoderDefaultBinary(agentType)}, nil
-	case "traecli":
-		return &traecliBackend{cfg: cfg}, nil
-	case "grok":
-		return &grokBackend{cfg: cfg}, nil
-	case "qwen":
-		return &qwenBackend{cfg: cfg}, nil
-	case "qwenpaw":
-		return &qwenpawBackend{cfg: cfg}, nil
-	case "mcode":
-		return &mcodeBackend{cfg: cfg}, nil
-	case "zeroclaw":
-		return &zeroclawBackend{cfg: cfg}, nil
-	default:
-		return nil, fmt.Errorf("unknown agent type: %q (supported: %s)", agentType, strings.Join(SupportedTypes, ", "))
-	}
-}
-
-// DetectVersion runs the agent CLI with --version and returns the output.
-//
-// cmd carries the runtime's launch prefix, so a custom profile is probed the
-// way it is launched: `ccms start q36 --version` reports the version of the
-// CLI the wrapper actually execs, where a bare `ccms --version` would report
-// the wrapper's own and pin the runtime to the wrong compatibility policy.
-func DetectVersion(ctx context.Context, cmd Command) (string, error) {
-	return detectCLIVersion(ctx, cmd)
 }
 
 // launchHeaders maps each supported agent type to the user-visible skeleton

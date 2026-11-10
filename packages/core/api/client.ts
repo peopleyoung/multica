@@ -1,3 +1,6 @@
+import { PasswordLoginResponseSchema } from "./schemas";
+import { WorkspaceModelSchema, ModelConnectionResultSchema } from "./schemas";
+import type { WorkspaceModel, WorkspaceModelInput, ModelConnectionInput, ModelConnectionResult } from "../types/workspace-model";
 import type { ZodType } from "zod";
 import type { IssueWakeup, IssueWakeupInput, IssueWakeupSummaryRow, PausedWakeup, SystemWakeup, WakeupRun, WorkspaceSystemWakeup } from "../types/issue-wakeup";
 import type { WorkspaceWakeupPage, WorkspaceWakeupFilters } from "../types/issue-wakeup";
@@ -970,18 +973,23 @@ export class ApiClient {
   }
 
   // Auth
-  async sendCode(email: string): Promise<void> {
-    await this.fetch("/auth/send-code", {
-      method: "POST",
-      body: JSON.stringify({ email }),
-    });
+  async passwordLogin(username: string, password: string): Promise<LoginResponse> {
+    return this.passwordAccount("login", { username, password });
   }
 
-  async verifyCode(email: string, code: string): Promise<LoginResponse> {
-    return this.fetch("/auth/verify-code", {
-      method: "POST",
-      body: JSON.stringify({ email, code }),
-    });
+  async registerAccount(username: string, password: string, email?: string): Promise<LoginResponse> {
+    return this.passwordAccount("register", { username, password, email });
+  }
+
+  private async passwordAccount(action: "login" | "register", input: { username: string; password: string; email?: string }): Promise<LoginResponse> {
+    const raw = await this.fetch<unknown>(`/auth/${action}`, { method: "POST", body: JSON.stringify(input) });
+    // Do not pass credential responses to diagnostic logging on parse failure.
+    const result = parseWithFallback<LoginResponse | null>(
+      PasswordLoginResponseSchema.safeParse(raw).success ? raw : null,
+      PasswordLoginResponseSchema, null, { endpoint: `password${action}` },
+    );
+    if (!result) throw new Error("Invalid sign-in response");
+    return result;
   }
 
   async googleLogin(code: string, redirectUri: string): Promise<LoginResponse> {
@@ -2653,13 +2661,14 @@ export class ApiClient {
   // fabricated empty catalog or an endless spinner (MUL-5444).
   async initiateListModels(
     runtimeId: string,
-    options: { force?: boolean } = {},
+    options: { force?: boolean; workspaceSlug?: string } = {},
   ): Promise<RuntimeModelListRequest> {
     const query = options.force === true ? "?force=true" : "";
     const raw = await this.fetch<unknown>(
       `/api/runtimes/${runtimeId}/models${query}`,
       {
         method: "POST",
+        headers: workspaceHeader(options.workspaceSlug),
       },
     );
     return parseWithFallback<RuntimeModelListRequest>(
@@ -2673,9 +2682,11 @@ export class ApiClient {
   async getListModelsResult(
     runtimeId: string,
     requestId: string,
+    workspaceSlug?: string,
   ): Promise<RuntimeModelListRequest> {
     const raw = await this.fetch<unknown>(
       `/api/runtimes/${runtimeId}/models/${requestId}`,
+      { headers: workspaceHeader(workspaceSlug) },
     );
     return parseWithFallback<RuntimeModelListRequest>(
       raw,
@@ -3035,6 +3046,29 @@ export class ApiClient {
    * transport only — the stored entries are write-only server-side, so there
    * is nothing here to redact.
    */
+  async listWorkspaceModels(workspaceId: string): Promise<WorkspaceModel[]> {
+    const raw = await this.fetch<unknown>(`/api/workspaces/${workspaceId}/models`);
+    return parseWithFallback<WorkspaceModel[]>(raw, WorkspaceModelSchema.array(), [], { endpoint: "GET /api/workspaces/:id/models" });
+  }
+
+  async saveWorkspaceModel(workspaceId: string, input: WorkspaceModelInput, id?: string): Promise<WorkspaceModel | null> {
+    const raw = await this.fetch<unknown>(`/api/workspaces/${workspaceId}/models${id ? `/${id}` : ""}`, {
+      method: id ? "PUT" : "POST", body: JSON.stringify(input),
+    });
+    return parseWithFallback<WorkspaceModel | null>(raw, WorkspaceModelSchema, null, { endpoint: "SAVE /api/workspaces/:id/models" });
+  }
+
+  async deleteWorkspaceModel(workspaceId: string, id: string): Promise<void> {
+    await this.fetch(`/api/workspaces/${workspaceId}/models/${id}`, { method: "DELETE" });
+  }
+
+  async testWorkspaceModel(workspaceId: string, input: ModelConnectionInput, id?: string, signal?: AbortSignal): Promise<ModelConnectionResult | null> {
+    const raw = await this.fetch<unknown>(`/api/workspaces/${workspaceId}/models${id ? `/${id}` : ""}/test`, {
+      method: "POST", body: JSON.stringify(input), signal,
+    });
+    return parseWithFallback<ModelConnectionResult | null>(raw, ModelConnectionResultSchema, null, { endpoint: "POST /api/workspaces/:id/models/test" });
+  }
+
   async listWorkspaceMcpServers(workspaceId: string): Promise<WorkspaceMcpServer[]> {
     const raw = await this.fetch<unknown>(`/api/workspaces/${workspaceId}/mcp-servers`);
     return parseWithFallback(raw, WorkspaceMcpServerListSchema, [] as WorkspaceMcpServer[], {

@@ -147,6 +147,7 @@ export function StepPlatformFork({
       </StepFooter>
 
     <CliInstallDialog
+      workspace={{ id: wsId, slug: wsSlug }}
       open={dialog === "cli"}
       onClose={() => setDialog(null)}
       onConnect={handleCliConnect}
@@ -267,6 +268,7 @@ function ForkAlt({
  * closes the dialog and fires the parent's `onConnect`.
  */
 function CliInstallDialog({
+  workspace,
   open,
   onClose,
   onConnect,
@@ -279,6 +281,7 @@ function CliInstallDialog({
   connecting,
   cliInstructions,
 }: {
+  workspace: { id: string; slug?: string };
   open: boolean;
   onClose: () => void;
   onConnect: () => void | Promise<void>;
@@ -314,6 +317,7 @@ function CliInstallDialog({
                   Keeps the commands above always reachable even when
                   a user has many machines registered. */}
               <MikaRuntimeChoice
+                workspace={workspace}
                 layout="list"
                 runtimes={runtimes}
                 value={choice}

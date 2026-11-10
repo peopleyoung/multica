@@ -58,60 +58,55 @@ export class TestApiClient {
     const client = new pg.Client(DATABASE_URL);
     await client.connect();
     try {
-      // Keep each E2E login isolated so previous test runs do not trip the
-      // per-email send-code rate limit.
-      await client.query("DELETE FROM verification_code WHERE email = $1", [email]);
-
-      // Step 1: Send verification code
-      const sendRes = await fetch(`${API_BASE}/auth/send-code`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email }),
+      // Explicit test-only provisioning preserves test identities across reruns.
+      const username = `e2e_${(await client.query("SELECT md5($1::text) AS hash", [email])).rows[0].hash.slice(0, 24)}`;
+      const password = "Multica-e2e-password-2026";
+      await client.query(`INSERT INTO "user" (name, email) VALUES ($1, $2)
+        ON CONFLICT (email) WHERE email <> '' DO NOTHING`, [name, email]);
+      await client.query(`UPDATE "user" SET username = $1, password_hash = crypt($2, gen_salt('bf', 12)) WHERE email = $3`, [username, password, email]);
+      const response = await fetch(`${API_BASE}/auth/login`, {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ username, password }),
       });
-      if (!sendRes.ok) {
-        throw new Error(`send-code failed: ${sendRes.status}`);
-      }
-
-      // Step 2: Read code from database
-      const result = await client.query(
-        "SELECT code FROM verification_code WHERE email = $1 AND used = FALSE AND expires_at > now() ORDER BY created_at DESC LIMIT 1",
-        [email],
-      );
-      if (result.rows.length === 0) {
-        throw new Error(`No verification code found for ${email}`);
-      }
-
-      const configuredDevCode = process.env.MULTICA_DEV_VERIFICATION_CODE?.trim();
-      const code = configuredDevCode || result.rows[0].code;
-
-      // Step 3: Verify code to get JWT
-      const verifyRes = await fetch(`${API_BASE}/auth/verify-code`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email, code }),
-      });
-      if (!verifyRes.ok) {
-        throw new Error(`verify-code failed: ${verifyRes.status}`);
-      }
-      const data = await verifyRes.json();
-
+      if (!response.ok) throw new Error(`password login failed: ${response.status}`);
+      const data = await response.json();
       this.token = data.token;
       this.email = email;
-
-      // Update user name if needed
-      if (name && data.user?.name !== name) {
-        await this.authedFetch("/api/me", {
-          method: "PATCH",
-          body: JSON.stringify({ name }),
-        });
-      }
-
-      await client.query("DELETE FROM verification_code WHERE email = $1", [email]);
-
+      if (name && data.user?.name !== name) await this.authedFetch("/api/me", { method: "PATCH", body: JSON.stringify({ name }) });
       return data;
-    } finally {
-      await client.end();
-    }
+    } finally { await client.end(); }
+  }
+
+  async loginWithPassword(username: string, password: string) {
+    const res = await fetch(`${API_BASE}/auth/login`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ username, password }) });
+    if (!res.ok) throw new Error(`Password login failed: ${res.status}`);
+    const data = await res.json();
+    this.token = data.token;
+    return data;
+  }
+
+  async createWorkspace(name: string, slug: string): Promise<TestWorkspace> {
+    const res = await this.authedFetch("/api/workspaces", { method: "POST", body: JSON.stringify({ name, slug }) });
+    if (!res.ok) throw new Error(`Create workspace failed: ${res.status}`);
+    const workspace: TestWorkspace = await res.json();
+    this.workspaceId = workspace.id;
+    this.workspaceSlug = workspace.slug;
+    return workspace;
+  }
+
+  async registerModelTestRuntime() {
+    const res = await this.authedFetch("/api/daemon/register", {
+      method: "POST", headers: { "X-Client-Capabilities": "native-runtime-v1" },
+      body: JSON.stringify({ workspace_id: this.workspaceId, daemon_id: `models-e2e-${Date.now()}`, device_name: "Models UI fixture", runtimes: [{ name: "Models UI fixture", type: "native", version: "fixture", status: "online" }] }),
+    });
+    if (!res.ok) throw new Error(`Register model fixture runtime failed: ${res.status}`);
+    return res.json();
+  }
+
+  async listWorkspaceModels(): Promise<Array<{ id: string; name: string; has_api_key: boolean; is_default: boolean; model: string }>> {
+    const res = await this.authedFetch(`/api/workspaces/${this.workspaceId}/models`);
+    if (!res.ok) throw new Error(`List models failed: ${res.status}`);
+    return res.json();
   }
 
   async getWorkspaces(): Promise<TestWorkspace[]> {
@@ -183,6 +178,45 @@ export class TestApiClient {
     } finally {
       await client.end();
     }
+  }
+
+  async listRuntimes(): Promise<Array<{ id: string; daemon_id: string; provider: string; status: string }>> {
+    const res = await this.authedFetch("/api/runtimes");
+    if (!res.ok) throw new Error(`list runtimes failed: ${res.status}`);
+    return res.json();
+  }
+
+  async createChatSession(agentId: string): Promise<{ id: string }> {
+    const res = await this.authedFetch("/api/chat/sessions", {
+      method: "POST",
+      body: JSON.stringify({ agent_id: agentId, title: "Native acceptance" }),
+    });
+    if (!res.ok) throw new Error(`create chat session failed: ${res.status} ${await res.text()}`);
+    return res.json();
+  }
+
+  async getAutopilot(id: string): Promise<{
+    autopilot: { assignee_id: string; execution_mode: string };
+    triggers: Array<{ kind: string; cron_expression: string; timezone: string }>;
+  }> {
+    const res = await this.authedFetch(`/api/autopilots/${id}`);
+    if (!res.ok) throw new Error(`read automation failed: ${res.status}`);
+    return res.json();
+  }
+
+  async getIssue(id: string): Promise<{
+    id: string; status: string; assignee_id: string; project_id: string; parent_issue_id?: string;
+    source_context?: { snapshot: { source_issue: { attachments: Array<{ id: string; source_attachment_id?: string }> } } };
+  }> {
+    const res = await this.authedFetch(`/api/issues/${id}`);
+    if (!res.ok) throw new Error(`read issue failed: ${res.status}`);
+    return res.json();
+  }
+
+  async listIssueRuns(id: string): Promise<Array<{ id: string; agent_id: string; status: string }>> {
+    const res = await this.authedFetch(`/api/issues/${id}/task-runs`);
+    if (!res.ok) throw new Error(`list issue runs failed: ${res.status}`);
+    return res.json();
   }
 
   /** Create a project and register it for cleanup. */
@@ -346,6 +380,15 @@ export class TestApiClient {
     return (await res.json()) as { id: string };
   }
 
+  async uploadIssueFile(issueId: string, file: Blob, filename: string): Promise<{ id: string }> {
+    const body = new FormData();
+    body.set("issue_id", issueId);
+    body.set("file", file, filename);
+    const res = await this.authedFetch("/api/upload-file", { method: "POST", body });
+    if (!res.ok) throw new Error(`upload issue file failed: ${res.status}`);
+    return res.json();
+  }
+
   /** Adds an existing user to this client's workspace and returns the member id. */
   async addMemberByEmail(email: string, role: "admin" | "member" = "member"): Promise<string> {
     if (!this.workspaceId) throw new Error("Cannot add a member before a workspace is selected");
@@ -441,6 +484,19 @@ export class TestApiClient {
     return this.token;
   }
 
+  /** Remove only fresh password-auth test identities that never joined a workspace. */
+  async removePasswordTestAccount(username: string) {
+    if (!username.startsWith("e2e_password_")) throw new Error("Expected password-auth test username");
+    const client = new pg.Client(DATABASE_URL);
+    await client.connect();
+    try {
+      await client.query(`DELETE FROM "user" u WHERE username = $1
+        AND NOT EXISTS (SELECT 1 FROM member m WHERE m.user_id = u.id)`, [username]);
+    } finally {
+      await client.end();
+    }
+  }
+
   getEmail() {
     if (!this.email) {
       throw new Error("Test API client is not logged in");
@@ -450,7 +506,7 @@ export class TestApiClient {
 
   private async authedFetch(path: string, init?: RequestInit) {
     const headers: Record<string, string> = {
-      "Content-Type": "application/json",
+      ...(init?.body instanceof FormData ? {} : { "Content-Type": "application/json" }),
       ...((init?.headers as Record<string, string>) ?? {}),
     };
     if (this.token) headers["Authorization"] = `Bearer ${this.token}`;

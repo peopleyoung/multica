@@ -1,6 +1,7 @@
+// @vitest-environment node
 import { describe, expect, it } from "vitest";
 import type { AgentRuntime } from "../types";
-import { isRuntimeUsableForUser } from "./access";
+import { canReadRuntimeData, isRuntimeUsableForUser } from "./access";
 
 const OWNER = "user-owner";
 const OTHER = "user-other";
@@ -12,7 +13,7 @@ function makeRuntime(overrides: Partial<AgentRuntime> = {}): AgentRuntime {
     daemon_id: "daemon-1",
     name: "Test Runtime",
     runtime_mode: "local",
-    provider: "claude",
+    provider: "native",
     launch_header: "",
     status: "online",
     device_info: "",
@@ -32,6 +33,10 @@ function makeRuntime(overrides: Partial<AgentRuntime> = {}): AgentRuntime {
 // says is usable but the server refuses is a picker that 403s on submit —
 // the MUL-6126 bug — and the reverse is a runtime the UI hides for no reason.
 describe("isRuntimeUsableForUser", () => {
+  it("rejects historical executors even for their owner", () => {
+    expect(isRuntimeUsableForUser(makeRuntime({ provider: "codex" }), OWNER)).toBe(false);
+    expect(isRuntimeUsableForUser(makeRuntime({ profile_id: "profile-1" }), OWNER)).toBe(false);
+  });
   it("lets the owner use their own private runtime", () => {
     expect(isRuntimeUsableForUser(makeRuntime(), OWNER)).toBe(true);
   });
@@ -62,5 +67,16 @@ describe("isRuntimeUsableForUser", () => {
 
   it("allows everything while the viewer is unknown, so a loading session never hides the user's own runtime", () => {
     expect(isRuntimeUsableForUser(makeRuntime(), null)).toBe(true);
+  });
+});
+
+
+describe("canReadRuntimeData", () => {
+  it("retains historical usage access under the original visibility rules", () => {
+    const historical = makeRuntime({ provider: "codex", profile_id: "retired-profile" });
+    expect(canReadRuntimeData(historical, OWNER)).toBe(true);
+    expect(canReadRuntimeData(historical, OTHER)).toBe(false);
+    expect(canReadRuntimeData({ ...historical, visibility: "public" }, OTHER)).toBe(true);
+    expect(isRuntimeUsableForUser(historical, OWNER)).toBe(false);
   });
 });

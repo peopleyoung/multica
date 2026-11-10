@@ -1,4 +1,28 @@
 import { z } from "zod";
+
+export const ModelCapabilitiesSchema = z.object({
+  api: z.enum(["chat_completions", "responses"]).catch("chat_completions").default("chat_completions"),
+  streaming_tool_calls: z.boolean().default(false),
+  json_object: z.boolean().default(false),
+  context_tokens: z.number(),
+  max_output_tokens: z.number(),
+  max_tool_argument_bytes: z.number(),
+  max_tools: z.number(),
+  image_input: z.boolean().default(false),
+});
+
+export const WorkspaceModelSchema = z.object({
+  id: z.string().min(1), name: z.string(), base_url: z.string(), model: z.string(),
+  has_api_key: z.boolean().default(false), capabilities: ModelCapabilitiesSchema,
+  is_default: z.boolean().default(false), enabled: z.boolean().default(false),
+});
+
+export const ModelConnectionResultSchema = z.object({
+  ok: z.boolean(),
+  stage: z.enum(["text", "tool_call", "tool_result", "complete", "unknown"]).catch("unknown").default("unknown"),
+  code: z.string().default("unknown"),
+  duration_ms: z.number().int().nonnegative(),
+}).refine((value) => !value.ok || (value.stage === "complete" && value.code === "ok"));
 import { normalizeIssueStatusCategory } from "../issues/config/status";
 import type {
   AgentBuilderRuntimeSwitch,
@@ -2560,6 +2584,7 @@ export const EMPTY_WEBHOOK_DELIVERY: WebhookDelivery = {
 
 export const UserSchema = z.object({
   id: z.string(),
+  username: z.string().nullable().default(null),
   name: z.string().default(""),
   email: z.string().default(""),
   avatar_url: z.string().nullable().default(null),
@@ -3710,3 +3735,9 @@ export const RuntimeProfileSchema = z
     runtime_type: profile.runtime_type || profile.protocol_family,
   }));
 export const RuntimeProfileListSchema = z.array(RuntimeProfileSchema);
+
+// Authentication must fail closed: malformed credentials never establish a session.
+export const PasswordLoginResponseSchema = z.object({
+  token: z.string().min(1),
+  user: UserSchema.extend({ id: z.string().min(1) }),
+});

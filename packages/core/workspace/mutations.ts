@@ -1,10 +1,57 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
+import type { WorkspaceModelInput, ModelConnectionInput } from "../types/workspace-model";
+import { runtimeKeys } from "../runtimes/queries";
+import { runtimeModelsKeys } from "../runtimes/models";
 import { forgetLocalSearchIndex } from "../search-index/instance";
 import type { Workspace } from "../types";
 import { api } from "../api";
 import { defaultStorage } from "../platform/storage";
 import { clearWorkspaceStorage } from "../platform/storage-cleanup";
 import { workspaceKeys } from "./queries";
+
+export function useTestWorkspaceModel(wsId: string) {
+  return useMutation({
+    retry: false,
+    gcTime: 0,
+    mutationFn: async ({ id, input, signal }: { id?: string; input: ModelConnectionInput; signal: AbortSignal }) => {
+      const result = await api.testWorkspaceModel(wsId, input, id, signal);
+      if (!result) throw new Error("Invalid model connection test response");
+      return result;
+    },
+  });
+}
+
+export function useSaveWorkspaceModel(wsId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ id, input }: { id?: string; input: WorkspaceModelInput }) => {
+      const result = await api.saveWorkspaceModel(wsId, input, id);
+      if (!result) throw new Error("The saved model response was invalid. Refresh the model list.");
+      return result;
+    },
+    onSuccess: async () => {
+      await Promise.all([
+        qc.invalidateQueries({ queryKey: workspaceKeys.models(wsId) }),
+        qc.invalidateQueries({ queryKey: runtimeModelsKeys.all() }),
+        qc.invalidateQueries({ queryKey: runtimeKeys.all(wsId) }),
+      ]);
+    },
+  });
+}
+
+export function useDeleteWorkspaceModel(wsId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => api.deleteWorkspaceModel(wsId, id),
+    onSuccess: async () => {
+      await Promise.all([
+        qc.invalidateQueries({ queryKey: workspaceKeys.models(wsId) }),
+        qc.invalidateQueries({ queryKey: runtimeModelsKeys.all() }),
+        qc.invalidateQueries({ queryKey: runtimeKeys.all(wsId) }),
+      ]);
+    },
+  });
+}
 import {
   markWorkspaceDeletePending,
   unmarkWorkspaceDeletePending,

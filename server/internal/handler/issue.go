@@ -2982,6 +2982,11 @@ func (h *Handler) checkQuickCreateDaemonVersionAtLeast(ctx context.Context, sour
 			"reason": "agent's runtime is no longer registered",
 		}
 	}
+	// Native creation uses API business tools, not the bundled CLI whose
+	// attachment and retry fixes this legacy version gate protects.
+	if rt.Provider == "native" {
+		return 0, nil
+	}
 	current := readRuntimeCLIVersion(rt.Metadata)
 	switch err := agentpkg.CheckMinCLIVersionFor(current, minimum); {
 	case err == nil:

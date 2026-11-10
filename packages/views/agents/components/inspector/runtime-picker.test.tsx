@@ -37,9 +37,9 @@ function makeRuntime(overrides: Partial<RuntimeDevice>): RuntimeDevice {
     id: "rt",
     workspace_id: "ws-1",
     daemon_id: null,
-    name: "Claude (host.local)",
+    name: "Multica Native (host.local)",
     runtime_mode: "local",
-    provider: "claude",
+    provider: "native",
     launch_header: "",
     status: "online",
     device_info: "host.local · macOS (arm64)",
@@ -59,23 +59,15 @@ function makeRuntime(overrides: Partial<RuntimeDevice>): RuntimeDevice {
 const RT_CLAUDE = makeRuntime({
   id: "rt-claude",
   daemon_id: "daemon-1",
-  name: "Claude (mbp.local)",
+  name: "Multica Native (mbp.local)",
   custom_name: "Jiayuan's MacBook Pro",
-  provider: "claude",
+  provider: "native",
 });
-const RT_CODEX = makeRuntime({
-  id: "rt-codex",
-  daemon_id: "daemon-1",
-  name: "Codex (mbp.local)",
-  custom_name: "Jiayuan's MacBook Pro",
-  provider: "codex",
-});
-
 // Another member's public machine.
 const RT_OTHER_PUBLIC = makeRuntime({
   id: "rt-other-claude",
   daemon_id: "daemon-2",
-  name: "Claude (other.local)",
+  name: "Multica Native (other.local)",
   owner_id: OTHER,
   visibility: "public",
 });
@@ -84,13 +76,13 @@ const RT_OTHER_PUBLIC = makeRuntime({
 const RT_OTHER_PRIVATE = makeRuntime({
   id: "rt-other-private",
   daemon_id: "daemon-3",
-  name: "Gemini (secret.local)",
-  provider: "gemini",
+  name: "Multica Native (secret.local)",
+  provider: "native",
   owner_id: OTHER,
   visibility: "private",
 });
 
-const ALL_RUNTIMES = [RT_CLAUDE, RT_CODEX, RT_OTHER_PUBLIC, RT_OTHER_PRIVATE];
+const ALL_RUNTIMES = [RT_CLAUDE, RT_OTHER_PUBLIC, RT_OTHER_PRIVATE];
 
 function renderPicker(
   props: Partial<React.ComponentProps<typeof RuntimePicker>> = {},
@@ -128,7 +120,7 @@ describe("RuntimePicker (agent settings)", () => {
     // trigger was just the machine name.
     expect(
       screen.getByRole("button", {
-        name: /Runtime · Claude · Jiayuan's MacBook Pro · online/,
+        name: /Runtime · Multica Native · Jiayuan's MacBook Pro · online/,
       }),
     ).toBeTruthy();
   });
@@ -138,8 +130,7 @@ describe("RuntimePicker (agent settings)", () => {
     openPicker();
 
     // Level 2: rows are labelled by runtime, not by the machine rename.
-    expect(screen.getByRole("button", { name: /^Claude/ })).toBeTruthy();
-    expect(screen.getByRole("button", { name: /^Codex/ })).toBeTruthy();
+    expect(screen.getByRole("button", { name: /^Multica Native/ })).toBeTruthy();
     // Back affordance carries the machine context.
     expect(
       screen.getByRole("button", { name: "Back to machines" }),
@@ -157,7 +148,7 @@ describe("RuntimePicker (agent settings)", () => {
     expect(
       screen.getByRole("button", { name: /^Jiayuan's MacBook Pro/ }),
     ).toBeTruthy();
-    expect(screen.getByText("2/2 online")).toBeTruthy();
+    expect(screen.getByText("1/1 online")).toBeTruthy();
     expect(screen.queryByRole("button", { name: /^other\.local/ })).toBeNull();
 
     fireEvent.click(screen.getByRole("button", { name: "All" }));
@@ -176,7 +167,7 @@ describe("RuntimePicker (agent settings)", () => {
     fireEvent.click(screen.getByRole("button", { name: "All" }));
     fireEvent.click(screen.getByRole("button", { name: /^other\.local/ }));
 
-    const row = await screen.findByRole("button", { name: /^Claude/ });
+    const row = await screen.findByRole("button", { name: /^Multica Native/ });
     fireEvent.click(row);
     expect(onChange).toHaveBeenCalledWith("rt-other-claude");
   });
@@ -187,7 +178,7 @@ describe("RuntimePicker (agent settings)", () => {
 
     // Lands inside the other member's machine even though the picker
     // defaults to the Mine scope.
-    expect(screen.getByRole("button", { name: /^Claude/ })).toBeTruthy();
+    expect(screen.getByRole("button", { name: /^Multica Native/ })).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "Back to machines" }));
     expect(
       screen.getByRole("button", { name: /^Jiayuan's MacBook Pro/ }),
@@ -204,7 +195,7 @@ describe("RuntimePicker (agent settings)", () => {
     fireEvent.click(screen.getByRole("button", { name: "All" }));
     fireEvent.click(screen.getByRole("button", { name: /^secret\.local/ }));
 
-    const locked = screen.getByRole("button", { name: /^Gemini/ });
+    const locked = screen.getByRole("button", { name: /^Multica Native/ });
     expect((locked as HTMLButtonElement).disabled).toBe(true);
     fireEvent.click(locked);
     expect(onChange).not.toHaveBeenCalled();
@@ -215,11 +206,10 @@ describe("RuntimePicker (agent settings)", () => {
       value: "",
       runtimes: [
         RT_CLAUDE,
-        RT_CODEX,
         makeRuntime({
           id: "rt-laptop",
           daemon_id: "daemon-4",
-          name: "Claude (laptop.local)",
+          name: "Multica Native (laptop.local)",
         }),
       ],
     });
@@ -236,10 +226,9 @@ describe("RuntimePicker (agent settings)", () => {
   });
 
   it("skips the pointless single-machine list when nothing is selected", () => {
-    renderPicker({ value: "", runtimes: [RT_CLAUDE, RT_CODEX] });
+    renderPicker({ value: "", runtimes: [RT_CLAUDE] });
     fireEvent.click(screen.getByRole("button", { name: /^Runtime · none/ }));
 
-    expect(screen.getByRole("button", { name: /^Claude/ })).toBeTruthy();
-    expect(screen.getByRole("button", { name: /^Codex/ })).toBeTruthy();
+    expect(screen.getByRole("button", { name: /^Multica Native/ })).toBeTruthy();
   });
 });

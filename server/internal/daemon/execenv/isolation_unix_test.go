@@ -15,13 +15,15 @@ import (
 )
 
 // TestPrepareIsolated_PermanentFIFOBlockThenImmediateRetry is the lifecycle
-// regression for MUL-4923. The first real Codex Prepare blocks forever opening
-// a shared config FIFO. After the deadline, there must be no reader left on
+// regression for MUL-4923. The first native Prepare blocks while comparing a
+// pre-existing task marker FIFO. After the deadline, there must be no reader left on
 // that FIFO before an immediate retry mutates the same env root.
 func TestPrepareIsolated_PermanentFIFOBlockThenImmediateRetry(t *testing.T) {
-	sharedCodexHome := t.TempDir()
-	t.Setenv("CODEX_HOME", sharedCodexHome)
-	fifo := filepath.Join(sharedCodexHome, "config.json")
+	userDir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(userDir, ".multica"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	fifo := filepath.Join(userDir, TaskContextMarkerRelPath)
 	if err := syscall.Mkfifo(fifo, 0o600); err != nil {
 		t.Fatalf("create config FIFO: %v", err)
 	}
@@ -31,10 +33,12 @@ func TestPrepareIsolated_PermanentFIFOBlockThenImmediateRetry(t *testing.T) {
 		WorkspaceID:    "ws-isolated-prepare",
 		TaskID:         "11111111-2222-3333-4444-555555555555",
 		AgentName:      "isolation-test",
-		Provider:       "codex",
+		Provider:       "native",
+		LocalWorkDir:   userDir,
 		Task: TaskContextForEnv{
-			IssueID: "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
-			AgentID: "ffffffff-1111-2222-3333-444444444444",
+			IssueID:   "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
+			ProjectID: "project",
+			AgentID:   "ffffffff-1111-2222-3333-444444444444",
 		},
 	}
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
@@ -70,7 +74,7 @@ func TestPrepareIsolated_PermanentFIFOBlockThenImmediateRetry(t *testing.T) {
 	if err := os.Remove(fifo); err != nil {
 		t.Fatalf("remove config FIFO: %v", err)
 	}
-	if err := os.WriteFile(fifo, []byte("{}\n"), 0o600); err != nil {
+	if err := os.WriteFile(fifo, []byte(`{"managed_by":"multica-daemon-task"}`), 0o600); err != nil {
 		t.Fatalf("replace config FIFO: %v", err)
 	}
 	retryCtx, retryCancel := context.WithTimeout(context.Background(), 5*time.Second)

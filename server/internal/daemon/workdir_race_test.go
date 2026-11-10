@@ -52,7 +52,7 @@ func TestHandleTask_DoesNotCallStartTaskItself(t *testing.T) {
 		client:             NewClient(srv.URL),
 		logger:             slog.New(slog.NewTextHandler(io.Discard, nil)),
 		workspaces:         make(map[string]*workspaceState),
-		runtimeIndex:       map[string]Runtime{"rt-1": {ID: "rt-1", Provider: "claude"}},
+		runtimeIndex:       map[string]Runtime{"rt-1": {ID: "rt-1", Provider: "native"}},
 		activeEnvRoots:     make(map[string]int),
 		cancelPollInterval: time.Hour, // disable poll-cancel path; we only care about the entry-side ordering
 	}
@@ -126,12 +126,12 @@ func TestRunTask_StartTaskCalledAfterWorkdirOnDisk(t *testing.T) {
 		client:         NewClient(srv.URL),
 		logger:         slog.New(slog.NewTextHandler(io.Discard, nil)),
 		workspaces:     make(map[string]*workspaceState),
-		runtimeIndex:   map[string]Runtime{"rt-1": {ID: "rt-1", Provider: "claude"}},
+		runtimeIndex:   map[string]Runtime{"rt-1": {ID: "rt-1", Provider: "native"}},
 		activeEnvRoots: make(map[string]int),
 		cfg: Config{
 			WorkspacesRoot: workspacesRoot,
 			Agents: map[string]AgentEntry{
-				"claude": {Path: missingBin, Model: ""},
+				"native": {Path: missingBin, Model: ""},
 			},
 		},
 	}
@@ -147,7 +147,7 @@ func TestRunTask_StartTaskCalledAfterWorkdirOnDisk(t *testing.T) {
 
 	taskLog := slog.New(slog.NewTextHandler(io.Discard, nil))
 	// The Run() failure is expected; we only assert the pre-Run ordering.
-	_, _ = d.runTask(context.Background(), task, "claude", 0, taskLog)
+	_, _ = d.runTask(context.Background(), task, "native", 0, taskLog)
 
 	if !startCalled.Load() {
 		t.Fatal("runTask did not call /start — Fix A's StartTask placement is missing")
@@ -168,57 +168,44 @@ func TestRunTask_InjectsPrivateTaskTempDir(t *testing.T) {
 	workspacesRoot := filepath.Join(t.TempDir(), strings.Repeat("long-workspaces-root-", 3))
 	workspaceID := "ws-private-temp"
 	taskID := "task-private-temp-with-long-id-that-would-overflow-socket-paths"
-	envRoot := execenv.PredictRootDir(execenv.RootDirParams{WorkspacesRoot: workspacesRoot, WorkspaceID: workspaceID, TaskID: taskID})
+	envRoot := execenv.PredictRootDir(execenv.RootDirParams{WorkspacesRoot: workspacesRoot,
+		WorkspaceID: workspaceID, TaskID: taskID})
 
 	captureFile := filepath.Join(t.TempDir(), "agent-env.txt")
-	fakeBin := filepath.Join(t.TempDir(), "claude")
-	script := `#!/bin/sh
-if [ -d "$TMPDIR" ]; then
-  tmpdir_exists=yes
-else
-  tmpdir_exists=no
-fi
-printf 'TMPDIR=%s\nTMP=%s\nTEMP=%s\nTMPDIR_EXISTS=%s\n' "$TMPDIR" "$TMP" "$TEMP" "$tmpdir_exists" > "$CAPTURE_FILE"
-IFS= read -r _
-printf '%s\n' '{"type":"system","session_id":"sess-private-temp"}'
-printf '%s\n' '{"type":"result","subtype":"success","is_error":false,"session_id":"sess-private-temp","result":"done"}'
-`
-	writeTestExecutable(t, fakeBin, []byte(script))
-	if err := os.Chmod(fakeBin, 0o755); err != nil {
-		t.Fatalf("chmod fake agent: %v", err)
-	}
-
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		_, _ = w.Write([]byte(`{}`))
-	}))
+	srv := httptest.NewServer(newNativeLifecycleFixture(t, `if [ -d "$TMPDIR" ]; then tmpdir_exists=yes; else tmpdir_exists=no; fi
+printf 'TMPDIR=%s\nTMP=%s\nTEMP=%s\nTMPDIR_EXISTS=%s\n' "$TMPDIR" "$TMP" "$TEMP" "$tmpdir_exists" > "$CAPTURE_FILE"`))
 	t.Cleanup(srv.Close)
 
 	d := &Daemon{
 		client:         NewClient(srv.URL),
 		logger:         slog.New(slog.NewTextHandler(io.Discard, nil)),
 		workspaces:     make(map[string]*workspaceState),
-		runtimeIndex:   map[string]Runtime{"rt-1": {ID: "rt-1", Provider: "claude"}},
+		runtimeIndex:   map[string]Runtime{"rt-1": {ID: "rt-1", Provider: "native"}},
 		activeEnvRoots: make(map[string]int),
 		cfg: Config{
-			WorkspacesRoot: workspacesRoot,
-			AgentTimeout:   5 * time.Second,
-			ServerBaseURL:  srv.URL,
+			WorkspacesRoot:   workspacesRoot,
+			NativeAllowShell: true,
+			AgentTimeout:     5 * time.Second,
+			ServerBaseURL:    srv.URL,
 			Agents: map[string]AgentEntry{
-				"claude": {Path: fakeBin, Model: ""},
+				"native": {},
 			},
 		},
 	}
 
 	task := Task{
-		ID:          taskID,
-		WorkspaceID: workspaceID,
-		RuntimeID:   "rt-1",
-		IssueID:     "issue-private-temp",
-		AgentID:     "agent-private-temp",
-		AuthToken:   "mat_private_temp",
+		ID:                   taskID,
+		NativeInputTaskID:    taskID,
+		RemoteMCPDaemonToken: "mdt_fixture",
+		WorkspaceID:          workspaceID,
+		RuntimeID:            "rt-1",
+		IssueID:              "issue-private-temp",
+		AgentID:              "agent-private-temp",
+		AuthToken:            "mat_private_temp",
 		Agent: &AgentData{
-			ID:   "agent-private-temp",
-			Name: "test-agent",
+			ID:            "agent-private-temp",
+			RuntimeConfig: []byte(`{"shell":true}`),
+			Name:          "test-agent",
 			CustomEnv: map[string]string{
 				"CAPTURE_FILE": captureFile,
 				"TMPDIR":       "/shared/tmp",
@@ -229,7 +216,7 @@ printf '%s\n' '{"type":"result","subtype":"success","is_error":false,"session_id
 	}
 
 	taskLog := slog.New(slog.NewTextHandler(io.Discard, nil))
-	result, err := d.runTask(context.Background(), task, "claude", 0, taskLog)
+	result, err := d.runTask(context.Background(), task, "native", 0, taskLog)
 	if err != nil {
 		t.Fatalf("runTask(): %v", err)
 	}
@@ -413,46 +400,40 @@ func TestRunTask_TaskTempBaseOverride(t *testing.T) {
 	taskID := "task-temp-base"
 
 	captureFile := filepath.Join(t.TempDir(), "agent-env.txt")
-	fakeBin := filepath.Join(t.TempDir(), "claude")
-	script := `#!/bin/sh
-printf 'TMPDIR=%s\nTMP=%s\nTEMP=%s\n' "$TMPDIR" "$TMP" "$TEMP" > "$CAPTURE_FILE"
-IFS= read -r _
-printf '%s\n' '{"type":"system","session_id":"sess-temp-base"}'
-printf '%s\n' '{"type":"result","subtype":"success","is_error":false,"session_id":"sess-temp-base","result":"done"}'
-`
-	writeTestExecutable(t, fakeBin, []byte(script))
-
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		_, _ = w.Write([]byte(`{}`))
-	}))
+	srv := httptest.NewServer(newNativeLifecycleFixture(t, `if [ -d "$TMPDIR" ]; then tmpdir_exists=yes; else tmpdir_exists=no; fi
+printf 'TMPDIR=%s\nTMP=%s\nTEMP=%s\nTMPDIR_EXISTS=%s\n' "$TMPDIR" "$TMP" "$TEMP" "$tmpdir_exists" > "$CAPTURE_FILE"`))
 	t.Cleanup(srv.Close)
 
 	d := &Daemon{
 		client:         NewClient(srv.URL),
 		logger:         slog.New(slog.NewTextHandler(io.Discard, nil)),
 		workspaces:     make(map[string]*workspaceState),
-		runtimeIndex:   map[string]Runtime{"rt-1": {ID: "rt-1", Provider: "claude"}},
+		runtimeIndex:   map[string]Runtime{"rt-1": {ID: "rt-1", Provider: "native"}},
 		activeEnvRoots: make(map[string]int),
 		cfg: Config{
-			WorkspacesRoot: workspacesRoot,
-			AgentTimeout:   5 * time.Second,
-			ServerBaseURL:  srv.URL,
+			WorkspacesRoot:   workspacesRoot,
+			NativeAllowShell: true,
+			AgentTimeout:     5 * time.Second,
+			ServerBaseURL:    srv.URL,
 			Agents: map[string]AgentEntry{
-				"claude": {Path: fakeBin, Model: ""},
+				"native": {},
 			},
 		},
 	}
 
 	task := Task{
-		ID:          taskID,
-		WorkspaceID: workspaceID,
-		RuntimeID:   "rt-1",
-		IssueID:     "issue-temp-base",
-		AgentID:     "agent-temp-base",
-		AuthToken:   "mat_temp_base",
+		ID:                   taskID,
+		NativeInputTaskID:    taskID,
+		RemoteMCPDaemonToken: "mdt_fixture",
+		WorkspaceID:          workspaceID,
+		RuntimeID:            "rt-1",
+		IssueID:              "issue-temp-base",
+		AgentID:              "agent-temp-base",
+		AuthToken:            "mat_temp_base",
 		Agent: &AgentData{
-			ID:   "agent-temp-base",
-			Name: "test-agent",
+			ID:            "agent-temp-base",
+			RuntimeConfig: []byte(`{"shell":true}`),
+			Name:          "test-agent",
 			CustomEnv: map[string]string{
 				"CAPTURE_FILE": captureFile,
 				"TMPDIR":       "/shared/tmp",
@@ -463,7 +444,7 @@ printf '%s\n' '{"type":"result","subtype":"success","is_error":false,"session_id
 	}
 
 	taskLog := slog.New(slog.NewTextHandler(io.Discard, nil))
-	result, err := d.runTask(context.Background(), task, "claude", 0, taskLog)
+	result, err := d.runTask(context.Background(), task, "native", 0, taskLog)
 	if err != nil {
 		t.Fatalf("runTask(): %v", err)
 	}
@@ -514,7 +495,7 @@ func TestRunTask_TaskTempBaseInvalidFailsStartup(t *testing.T) {
 
 	workspacesRoot := t.TempDir()
 	captureFile := filepath.Join(t.TempDir(), "agent-env.txt")
-	fakeBin := filepath.Join(t.TempDir(), "claude")
+	fakeBin := filepath.Join(t.TempDir(), "native")
 	script := `#!/bin/sh
 printf 'ran\n' > "$CAPTURE_FILE"
 `
@@ -529,14 +510,14 @@ printf 'ran\n' > "$CAPTURE_FILE"
 		client:         NewClient(srv.URL),
 		logger:         slog.New(slog.NewTextHandler(io.Discard, nil)),
 		workspaces:     make(map[string]*workspaceState),
-		runtimeIndex:   map[string]Runtime{"rt-1": {ID: "rt-1", Provider: "claude"}},
+		runtimeIndex:   map[string]Runtime{"rt-1": {ID: "rt-1", Provider: "native"}},
 		activeEnvRoots: make(map[string]int),
 		cfg: Config{
 			WorkspacesRoot: workspacesRoot,
 			AgentTimeout:   5 * time.Second,
 			ServerBaseURL:  srv.URL,
 			Agents: map[string]AgentEntry{
-				"claude": {Path: fakeBin, Model: ""},
+				"native": {Path: fakeBin, Model: ""},
 			},
 		},
 	}
@@ -556,7 +537,7 @@ printf 'ran\n' > "$CAPTURE_FILE"
 	}
 
 	taskLog := slog.New(slog.NewTextHandler(io.Discard, nil))
-	_, err := d.runTask(context.Background(), task, "claude", 0, taskLog)
+	_, err := d.runTask(context.Background(), task, "native", 0, taskLog)
 	if err == nil {
 		t.Fatal("runTask() succeeded with an unusable MULTICA_AGENT_TEMP_BASE, want failure")
 	}
@@ -613,13 +594,13 @@ func TestRunTask_ExtendsPrepareLeaseDuringStartTask(t *testing.T) {
 		client:              NewClient(srv.URL),
 		logger:              slog.New(slog.NewTextHandler(io.Discard, nil)),
 		workspaces:          make(map[string]*workspaceState),
-		runtimeIndex:        map[string]Runtime{"rt-1": {ID: "rt-1", Provider: "claude"}},
+		runtimeIndex:        map[string]Runtime{"rt-1": {ID: "rt-1", Provider: "native"}},
 		activeEnvRoots:      make(map[string]int),
 		prepareLeaseRefresh: 10 * time.Millisecond,
 		cfg: Config{
 			WorkspacesRoot: workspacesRoot,
 			Agents: map[string]AgentEntry{
-				"claude": {Path: missingBin, Model: ""},
+				"native": {Path: missingBin, Model: ""},
 			},
 		},
 	}
@@ -636,7 +617,7 @@ func TestRunTask_ExtendsPrepareLeaseDuringStartTask(t *testing.T) {
 	}
 
 	taskLog := slog.New(slog.NewTextHandler(io.Discard, nil))
-	_, _ = d.runTask(context.Background(), task, "claude", 0, taskLog)
+	_, _ = d.runTask(context.Background(), task, "native", 0, taskLog)
 
 	if !startEntered.Load() {
 		t.Fatal("runTask did not call /start")
@@ -726,20 +707,20 @@ func prepareTimeoutStopsLeaseDuringBlockedStart(t *testing.T, budget time.Durati
 	}
 
 	workspacesRoot := t.TempDir()
-	fakeBin := filepath.Join(t.TempDir(), "claude")
+	fakeBin := filepath.Join(t.TempDir(), "native")
 	writeTestExecutable(t, fakeBin, []byte("#!/bin/sh\nexit 0\n"))
 	d := &Daemon{
 		client:              client,
 		logger:              slog.New(slog.NewTextHandler(io.Discard, nil)),
 		workspaces:          make(map[string]*workspaceState),
-		runtimeIndex:        map[string]Runtime{"rt-1": {ID: "rt-1", Provider: "claude"}},
+		runtimeIndex:        map[string]Runtime{"rt-1": {ID: "rt-1", Provider: "native"}},
 		activeEnvRoots:      make(map[string]int),
 		taskPrepareTimeout:  budget,
 		prepareLeaseRefresh: leaseRefresh,
 		cfg: Config{
 			WorkspacesRoot: workspacesRoot,
 			Agents: map[string]AgentEntry{
-				"claude": {Path: fakeBin},
+				"native": {Path: fakeBin},
 			},
 		},
 	}
@@ -756,7 +737,7 @@ func prepareTimeoutStopsLeaseDuringBlockedStart(t *testing.T, budget time.Durati
 	}
 	taskLog := slog.New(slog.NewTextHandler(io.Discard, nil))
 	startedAt := time.Now()
-	_, err := d.runTask(context.Background(), task, "claude", 0, taskLog)
+	_, err := d.runTask(context.Background(), task, "native", 0, taskLog)
 	if !errors.Is(err, errTaskPrepareTimeout) {
 		t.Fatalf("runTask error = %v, want task prepare timeout", err)
 	}
@@ -821,7 +802,7 @@ func TestHandleTask_KeepsEnvRootActiveAcrossCompletion(t *testing.T) {
 	d := &Daemon{
 		logger:             slog.New(slog.NewTextHandler(io.Discard, nil)),
 		workspaces:         make(map[string]*workspaceState),
-		runtimeIndex:       map[string]Runtime{"rt-1": {ID: "rt-1", Provider: "claude"}},
+		runtimeIndex:       map[string]Runtime{"rt-1": {ID: "rt-1", Provider: "native"}},
 		activeEnvRoots:     make(map[string]int),
 		cancelPollInterval: time.Hour,
 		cfg:                Config{WorkspacesRoot: workspacesRoot},

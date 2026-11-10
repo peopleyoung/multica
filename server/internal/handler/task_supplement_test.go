@@ -65,7 +65,7 @@ func TestTaskSupplementSettlementHasNoDatabaseTrigger(t *testing.T) {
 }
 
 func TestTaskSupplementClaimStartReplay(t *testing.T) {
-	f := newSupplementFixture(t, "codex", "dispatched", false)
+	f := newSupplementFixture(t, "native", "dispatched", false)
 	dbfx.Cleanup(t, `DELETE FROM task_supplement_capability WHERE task_id=$1`, f.taskID)
 	generation := time.Date(2026, 9, 23, 0, 0, 0, 0, time.UTC)
 	dbfx.Exec(t, `UPDATE agent_task_queue SET dispatched_at=$2 WHERE id=$1`, f.taskID, generation)
@@ -73,7 +73,7 @@ func TestTaskSupplementClaimStartReplay(t *testing.T) {
 		req := withURLParam(newDaemonTokenRequest(http.MethodPost, "/start", map[string]any{
 			"runtime_id": f.runtimeID, "dispatched_at": generation.Format(time.RFC3339Nano),
 			"capabilities": []string{protocol.DaemonCapabilityTaskSupplementV1},
-		}, testWorkspaceID, "start-claim-test"), "taskId", f.taskID)
+		}, testWorkspaceID, runtimeDaemonID(t, f.runtimeID)), "taskId", f.taskID)
 		var started AgentTaskResponse
 		testutil.Call(t, testHandler.StartTask, req).Want(http.StatusOK).JSON(&started)
 		if started.SupplementCapability != protocol.DaemonCapabilityTaskSupplementV1 {
@@ -180,6 +180,8 @@ func TestTaskSupplementNegotiationFailsClosed(t *testing.T) {
 		{name: "codex negotiated", provider: "codex", daemonAdvertises: true, wantCapabilityRow: true},
 		{name: "claude negotiated", provider: "claude", daemonAdvertises: true, wantCapabilityRow: true},
 		{name: "grok negotiated", provider: "grok", daemonAdvertises: true, wantCapabilityRow: true},
+		{name: "native negotiated", provider: "native", daemonAdvertises: true, wantCapabilityRow: true},
+		{name: "native without supplement capability", provider: "native", daemonAdvertises: false, wantCapabilityRow: false},
 		{name: "claude old daemon", provider: "claude", daemonAdvertises: false, wantCapabilityRow: false},
 		{name: "old daemon", provider: "codex", daemonAdvertises: false, wantCapabilityRow: false},
 		{name: "unsupported runtime", provider: "kimi", daemonAdvertises: true, wantCapabilityRow: false},
@@ -190,8 +192,26 @@ func TestTaskSupplementNegotiationFailsClosed(t *testing.T) {
 			if tc.daemonAdvertises {
 				capabilities = []string{protocol.DaemonCapabilityTaskSupplementV1}
 			}
-			req := withURLParam(newRequest(http.MethodPost, "/start", map[string]any{"capabilities": capabilities}), "taskId", fixture.taskID)
+			body := map[string]any{"capabilities": capabilities}
+			if tc.provider == "native" {
+				// Supplement support remains independently negotiated, while the
+				// native base protocol always requires a fenced start.
+				dispatched := time.Now().UTC().Truncate(time.Microsecond)
+				dbfx.Exec(t, "UPDATE agent_task_queue SET dispatched_at=$2 WHERE id=$1", fixture.taskID, dispatched)
+				body["runtime_id"], body["dispatched_at"] = fixture.runtimeID, dispatched.Format(time.RFC3339Nano)
+			}
+			req := withURLParam(newRequest(http.MethodPost, "/start", body), "taskId", fixture.taskID)
+			if tc.provider == "native" {
+				req.Header.Set("X-Client-Capabilities", protocol.DaemonCapabilityNativeRuntimeV1)
+			}
 			var started AgentTaskResponse
+			if tc.provider != "native" {
+				testutil.Call(t, testHandler.StartTask, req).Want(http.StatusGone)
+				if got := dbfx.Count(t, `SELECT count(*) FROM task_supplement_capability WHERE task_id=$1`, fixture.taskID); got != 0 {
+					t.Fatal("retired start wrote a capability")
+				}
+				return
+			}
 			testutil.Call(t, testHandler.StartTask, req).Want(http.StatusOK).JSON(&started)
 			if started.Status != "running" || started.StartedAt == nil {
 				t.Fatalf("StartTask returned stale row: %#v", started)

@@ -119,7 +119,7 @@ func TestTaskPhaseRecorderRecordsReceivedAttemptPhasesInOrder(t *testing.T) {
 
 	_, _, err := d.executeAndDrain(ctx, taskPhaseTimingBackend{
 		session: &agent.Session{Messages: messages, Result: results},
-	}, "prompt", agent.ExecOptions{}, testTaskPhaseLogger(), "task-1", "", new(atomic.Int32))
+	}, "prompt", agent.ExecOptions{}, testTaskPhaseLogger(), "task-1", new(atomic.Int32))
 	if err != nil {
 		t.Fatalf("executeAndDrain() error = %v", err)
 	}

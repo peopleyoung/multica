@@ -168,7 +168,7 @@ func TestDaemonRegister_PreservesCustomNameInResponse(t *testing.T) {
 		testPool.Exec(context.Background(), `DELETE FROM agent_runtime WHERE daemon_id = $1`, daemonID)
 	})
 
-	first := registerRuntimeOnDaemon(t, daemonID, "claude")
+	first := registerRuntimeOnDaemon(t, daemonID, "native")
 	runtimeID := first["id"].(string)
 
 	// Simulate a rename, then re-register (the upsert preserves custom_name).
@@ -176,7 +176,7 @@ func TestDaemonRegister_PreservesCustomNameInResponse(t *testing.T) {
 		t.Fatalf("set custom_name: %v", err)
 	}
 
-	again := registerRuntimeOnDaemon(t, daemonID, "claude")
+	again := registerRuntimeOnDaemon(t, daemonID, "native")
 	if again["custom_name"] != "Prod Box" {
 		t.Fatalf("register response custom_name = %v, want \"Prod Box\" (must not be dropped)", again["custom_name"])
 	}
@@ -197,7 +197,7 @@ func TestDaemonRegister_NewRuntimeInheritsMachineName(t *testing.T) {
 	})
 
 	// Provider A registers, then the whole machine is named.
-	first := registerRuntimeOnDaemon(t, daemonID, "claude")
+	first := registerRuntimeOnDaemon(t, daemonID, "native")
 	idA := first["id"].(string)
 	if _, err := testPool.Exec(ctx, `UPDATE agent_runtime SET custom_name = 'Bohan MacBook' WHERE id = $1`, idA); err != nil {
 		t.Fatalf("name machine: %v", err)
@@ -205,7 +205,7 @@ func TestDaemonRegister_NewRuntimeInheritsMachineName(t *testing.T) {
 
 	// A brand-new provider on the same machine must inherit the machine name —
 	// both in the response and persisted.
-	second := registerRuntimeOnDaemon(t, daemonID, "codex")
+	second := registerRuntimeOnDaemon(t, daemonID, "native")
 	if second["custom_name"] != "Bohan MacBook" {
 		t.Fatalf("new runtime response custom_name = %v, want inherited \"Bohan MacBook\"", second["custom_name"])
 	}
@@ -234,7 +234,7 @@ func TestDaemonRegister_FailedProfileInheritsMachineName(t *testing.T) {
 	})
 
 	// A named machine: register a normal runtime, then name the whole machine.
-	first := registerRuntimeOnDaemon(t, daemonID, "claude")
+	first := registerRuntimeOnDaemon(t, daemonID, "native")
 	if _, err := testPool.Exec(ctx, `UPDATE agent_runtime SET custom_name = 'Bohan MacBook' WHERE id = $1`, first["id"].(string)); err != nil {
 		t.Fatalf("name machine: %v", err)
 	}

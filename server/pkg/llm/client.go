@@ -1,86 +1,21 @@
-// Package llm is a thin, reusable wrapper around the official OpenAI Go SDK
-// (github.com/openai/openai-go). It exists so the rest of the server has a
-// single, well-typed entry point for "just call an LLM" needs that do NOT
-// require the full agent runtime — currently chat auto-titling and chat
-// follow-up questions (MUL-4238).
+// Package llm owns deployment-configured model transport. OpenAI SDK types stay
+// in this package. Native execution uses Request, Event and Response; auxiliary
+// callers use GenerateText and GenerateJSON. Every path uses the same endpoint,
+// credentials and model, and disabled clients make zero upstream requests.
 //
-// # Scope: the assist layer, not every model call in the product
+// Native Complete is a model step, not a tool executor: it buffers function-call
+// fragments until a valid terminal response, and never replays an opened stream.
+// Explicit capabilities gate native execution; model names do not establish
+// context limits or tool support. DisableThinking applies only to auxiliary calls.
 //
-// This package covers the LLM calls the API process makes on its own behalf.
-// Running an agent is a different data path entirely: the daemon executes an
-// AI coding tool as a subprocess under that tool's own credentials, and does
-// not forward this layer's MULTICA_LLM_* settings to it. (It does inject the
-// task-scoped Multica connection variables the agent itself needs — see
-// mergeEnv in pkg/agent, which drops the daemon's inherited MULTICA_* and then
-// appends the values assembled for that task.) Nothing here governs that path,
-// and operator-facing copy about this layer must not imply otherwise — an
-// admin who reads "empty means nothing is sent" as covering the whole product
-// has been misled about where their chat content goes.
-//
-// # The single-entry-point rule
-//
-// Every LLM call the server process makes on its own behalf goes through this
-// package, and nothing outside it imports the OpenAI SDK directly. That is a
-// constraint to keep, not a coincidence: it is what makes "what does this
-// deployment's assist layer send to a third party?" answerable by reading one
-// package instead of auditing the tree. A new feature that wants a model calls
-// this package. Two tests hold the halves of that rule:
-// TestOpenAISDKIsImportedOnlyByThisPackage (nothing else reaches the SDK) and
-// TestDocumentedConsumersAreTheOnlyCallers (nothing else reaches this client).
-//
-// # Consumers, and what they send upstream
-//
-// Keep this list current when a consumer is added, removed, or changes what it
-// sends — it is the source the operator-facing copy is written from
-// (.env.example and apps/docs/content/docs/environment-variables*.mdx), and
-// TestDocumentedConsumersAreTheOnlyCallers fails until a new call site is
-// reflected here.
-//
-//   - Chat auto-titling — server/internal/handler/chat_title.go. Sends the
-//     first user message of a new chat session, verbatim and uncapped.
-//     Attachments are never included.
-//   - Chat follow-up questions, a.k.a. quick actions —
-//     server/internal/service/chat_quick_actions_generate.go.
-//     Sends the tail of the conversation: up to 6 messages, the reply being
-//     answered capped at 3000 runes (2000 head + 1000 tail) and each older
-//     message at 800.
-//
-// Request shape beyond the prompts is deployment-controlled and lives in
-// Config: MaxRetries (transport budget) and DisableThinking, which appends
-// `chat_template_kwargs: {"enable_thinking": false}` to every request body for
-// gateways that honor it — some GLM/Qwen-style routes spend a thinking pass
-// that dominates the assist calls' latency budget. Standard OpenAI endpoints
-// reject unknown body fields, so the knob is opt-in per deployment and off by
-// default.
-//
-// Both consumers send private chat content, which is why an unconfigured
-// deployment making zero upstream requests is a contract rather than a side
-// effect: New with no API key and no base URL returns a disabled client whose
-// every call fails with ErrNotConfigured before an HTTP request is ever built,
-// and both consumers check Enabled() before doing any work
-// (TestUnconfiguredClientMakesZeroUpstreamRequests). An operator who must not
-// let THIS layer send chat content leaves MULTICA_LLM_API_KEY and
-// MULTICA_LLM_BASE_URL empty; the product stays whole (client-derived chat
-// titles, no follow-up question buttons).
-//
-// The wrapper is intentionally small:
-//
-//   - It owns the SDK client construction (base URL + API key + retry/timeout
-//     defaults) so callers never touch option.RequestOption directly.
-//   - It exposes both the raw Chat Completions surface (Chat / ChatStream)
-//     and a convenience GenerateText helper, used by server-internal callers
-//     for simple one-shot completions (e.g. chat title generation).
-//   - The default model is configurable; when a request omits the model we
-//     fall back to it, and when it too is empty we fall back to a sane
-//     built-in default so a misconfigured deployment still returns a clear
-//     upstream error rather than a 400 from our own layer.
-//
-// Base URL and API key are configurable so the same layer can target OpenAI,
-// an OpenAI-compatible gateway, or a self-hosted model server.
+// Consumers include native daemon execution, chat_title.go (first user text,
+// no attachments), and chat_quick_actions_generate.go (capped message text).
+// Existing AI CLI runtimes remain separate until the staged migration completes.
 package llm
 
 import (
 	"context"
+	"crypto/sha256"
 	"errors"
 	"fmt"
 	"net/http"
@@ -114,13 +49,19 @@ var ErrNotConfigured = errors.New("llm: no API key or base URL configured")
 // Config holds the tunables for the LLM layer. All fields are optional; an
 // empty Config yields a disabled client (see Client.Enabled).
 type Config struct {
+	// Admission is the deployment-wide quota and usage ledger. Application
+	// wiring supplies it for all native and auxiliary model calls.
+	Admission Admission
+	// Capabilities enables native tool execution only after the deployment's
+	// protocol support and limits have been explicitly verified.
+	Capabilities Capabilities
 	// APIKey authenticates against the upstream. Maps to MULTICA_LLM_API_KEY.
 	APIKey string
 	// BaseURL points at OpenAI or any OpenAI-compatible gateway. When empty the
 	// SDK's default (https://api.openai.com/v1) is used. Maps to
 	// MULTICA_LLM_BASE_URL.
 	BaseURL string
-	// DefaultModel is used when a request omits the model. Maps to
+	// DefaultModel is the only model permitted for requests. Maps to
 	// MULTICA_LLM_DEFAULT_MODEL. When empty, FallbackModel is used.
 	DefaultModel string
 	// MaxRetries is the transport-level retry budget applied to every request
@@ -154,7 +95,7 @@ type Config struct {
 	// recoverable failure into a deadline-exceeded one.
 	MaxRetries *RetryOverride
 	// DisableThinking appends `chat_template_kwargs: {"enable_thinking": false}`
-	// to every request body this client sends. Some OpenAI-compatible gateways
+	// to auxiliary request bodies this client sends. Some OpenAI-compatible gateways
 	// (vLLM/sglang-style deployments, and LiteLLM routes that forward the
 	// field) honor it for GLM/Qwen-style models whose default thinking pass
 	// would otherwise dominate the latency budget of the assist calls above.
@@ -238,6 +179,9 @@ type Client struct {
 	enabled         bool
 	disableThinking bool
 	retry           RetryBudget
+	capabilities    Capabilities
+	configErr       error
+	responseSource  string
 }
 
 // New builds a Client from cfg. It never returns an error: an unconfigured
@@ -246,12 +190,14 @@ type Client struct {
 // is simply not set up on a given deployment).
 func New(cfg Config) *Client {
 	opts := make([]option.RequestOption, 0, 4)
-	if key := strings.TrimSpace(cfg.APIKey); key != "" {
-		opts = append(opts, option.WithAPIKey(key))
+	// Explicit values prevent unrelated OPENAI_* environment variables from
+	// silently replacing this deployment's endpoint or credentials.
+	opts = append(opts, option.WithAPIKey(strings.TrimSpace(cfg.APIKey)))
+	base := strings.TrimSpace(cfg.BaseURL)
+	if base == "" {
+		base = "https://api.openai.com/v1"
 	}
-	if base := strings.TrimSpace(cfg.BaseURL); base != "" {
-		opts = append(opts, option.WithBaseURL(base))
-	}
+	opts = append(opts, option.WithBaseURL(base))
 	retry := RetryBudget{
 		MaxRetries:     DefaultMaxRetries,
 		Source:         RetrySourceDefault,
@@ -267,14 +213,6 @@ func New(cfg Config) *Client {
 	// Always set it explicitly, even for the default, so the budget the SDK
 	// enforces and the one RetryBudget reports are the same number.
 	opts = append(opts, option.WithMaxRetries(retry.MaxRetries))
-	if cfg.DisableThinking {
-		// Applied as a body mutation rather than a typed field:
-		// chat_template_kwargs is not part of the Chat Completions schema, and
-		// sjson merging cannot collide with any managed field (model, messages,
-		// response_format, ...). The mutation runs after the typed body is
-		// marshaled, so it survives every GenerateText/GenerateJSON shape.
-		opts = append(opts, option.WithJSONSet("chat_template_kwargs", map[string]any{"enable_thinking": false}))
-	}
 	if cfg.HTTPClient != nil {
 		opts = append(opts, option.WithHTTPClient(cfg.HTTPClient))
 	}
@@ -282,6 +220,13 @@ func New(cfg Config) *Client {
 	defaultModel := strings.TrimSpace(cfg.DefaultModel)
 	if defaultModel == "" {
 		defaultModel = FallbackModel
+	}
+	if cfg.Admission != nil {
+		upstream := cfg.HTTPClient
+		if upstream == nil {
+			upstream = http.DefaultClient
+		}
+		opts = append(opts, option.WithHTTPClient(&admittedClient{upstream: upstream, admission: cfg.Admission, model: defaultModel, contextTokens: cfg.Capabilities.ContextTokens}))
 	}
 
 	return &Client{
@@ -292,6 +237,9 @@ func New(cfg Config) *Client {
 		enabled:         strings.TrimSpace(cfg.APIKey) != "" || strings.TrimSpace(cfg.BaseURL) != "",
 		disableThinking: cfg.DisableThinking,
 		retry:           retry,
+		capabilities:    cfg.Capabilities,
+		configErr:       cfg.Validate(),
+		responseSource:  fmt.Sprintf("%x", sha256.Sum256([]byte(base+"\x00"+defaultModel+"\x00"+cfg.APIKey))),
 	}
 }
 
@@ -309,38 +257,62 @@ func (c *Client) RetryBudget() RetryBudget {
 func (c *Client) Enabled() bool { return c != nil && c.enabled }
 
 // DisableThinking reports whether the client appends the chat_template_kwargs
-// thinking-off hint to every request it sends. It is read for the startup
+// thinking-off hint to auxiliary chat requests. Native execution uses its own
+// request policy. It is read for the startup
 // diagnostic line alongside RetryBudget so an operator can confirm the
 // effective request shape from the boot log alone. Safe to log: it carries no
 // credentials or URLs.
 func (c *Client) DisableThinking() bool { return c != nil && c.disableThinking }
 
 // DefaultModel returns the effective default model (never empty).
-func (c *Client) DefaultModel() string { return c.defaultModel }
-
-// applyDefaultModel fills in the default model when the caller left it blank.
-func (c *Client) applyDefaultModel(params *openai.ChatCompletionNewParams) {
-	if strings.TrimSpace(string(params.Model)) == "" {
-		params.Model = shared.ChatModel(c.defaultModel)
+func (c *Client) DefaultModel() string {
+	if c == nil {
+		return ""
 	}
+	return c.defaultModel
+}
+
+// applyDefaultModel rejects per-request model routing; all consumers share the
+// same deployment model, including auxiliary generation and native execution.
+func (c *Client) applyDefaultModel(params *openai.ChatCompletionNewParams) error {
+	if model := strings.TrimSpace(string(params.Model)); model != "" && model != c.defaultModel {
+		return errors.New("llm: request model differs from deployment model")
+	}
+	params.Model = shared.ChatModel(c.defaultModel)
+	return nil
+}
+
+func (c *Client) assistOptions() []option.RequestOption {
+	if c.disableThinking {
+		return []option.RequestOption{option.WithJSONSet("chat_template_kwargs", map[string]any{"enable_thinking": false})}
+	}
+	return nil
 }
 
 // Chat performs a non-streaming chat completion. The params are passed through
 // to the SDK verbatim (so tools, response_format, temperature, etc. are all
-// honored); only the model default is applied. The returned *ChatCompletion
+// honored); the deployment model is enforced. The returned *ChatCompletion
 // exposes RawJSON() for byte-exact OpenAI-compatible responses.
 func (c *Client) Chat(ctx context.Context, params openai.ChatCompletionNewParams) (*openai.ChatCompletion, error) {
 	if !c.Enabled() {
 		return nil, ErrNotConfigured
 	}
-	c.applyDefaultModel(&params)
+	if c.configErr != nil {
+		return nil, c.configErr
+	}
+	if err := c.applyDefaultModel(&params); err != nil {
+		return nil, err
+	}
+	if !params.MaxCompletionTokens.Valid() && !params.MaxTokens.Valid() {
+		params.MaxCompletionTokens = openai.Int(2048)
+	}
 
 	// Give the request a bounded lifetime when the caller supplied none, so a
 	// hung upstream cannot pin a goroutine indefinitely.
 	ctx, cancel := withDefaultTimeout(ctx)
 	defer cancel()
 
-	return c.sdk.Chat.Completions.New(ctx, params)
+	return c.sdk.Chat.Completions.New(ctx, params, c.assistOptions()...)
 }
 
 // ChatStream performs a streaming chat completion, returning the SDK stream so
@@ -357,17 +329,29 @@ func (c *Client) ChatStream(ctx context.Context, params openai.ChatCompletionNew
 	if !c.Enabled() {
 		return nil, ErrNotConfigured
 	}
-	c.applyDefaultModel(&params)
-	return c.sdk.Chat.Completions.NewStreaming(ctx, params), nil
+	if c.configErr != nil {
+		return nil, c.configErr
+	}
+	if err := c.applyDefaultModel(&params); err != nil {
+		return nil, err
+	}
+	if !params.MaxCompletionTokens.Valid() && !params.MaxTokens.Valid() {
+		params.MaxCompletionTokens = openai.Int(2048)
+	}
+	params.StreamOptions.IncludeUsage = openai.Bool(true)
+	return c.sdk.Chat.Completions.NewStreaming(ctx, params, c.assistOptions()...), nil
 }
 
 // GenerateText is a convenience for simple internal one-shot completions (chat
 // titles, quick-create drafts, ...). It sends an optional system prompt plus a
 // single user prompt and returns the assistant's text content. Model empty ->
-// the configured default.
+// the deployment model.
 func (c *Client) GenerateText(ctx context.Context, model, systemPrompt, userPrompt string) (string, error) {
 	if !c.Enabled() {
 		return "", ErrNotConfigured
+	}
+	if c.capabilities.API == "responses" {
+		return c.generateResponseText(ctx, model, systemPrompt, userPrompt, 2048, false)
 	}
 
 	messages := make([]openai.ChatCompletionMessageParamUnion, 0, 2)
@@ -408,10 +392,13 @@ func (c *Client) GenerateText(ctx context.Context, model, systemPrompt, userProm
 // those models may reject. Other models keep the caller's temperature so a
 // configurable deployment does not change behavior. temperature and
 // maxCompletionTokens apply only when positive; zero leaves the corresponding
-// upstream default in place. Model empty -> the configured default.
+// upstream default in place. Model empty -> the deployment model.
 func (c *Client) GenerateJSON(ctx context.Context, model, systemPrompt, userPrompt string, temperature float64, maxCompletionTokens int64) (string, error) {
 	if !c.Enabled() {
 		return "", ErrNotConfigured
+	}
+	if c.capabilities.API == "responses" {
+		return c.generateResponseText(ctx, model, systemPrompt, userPrompt, maxCompletionTokens, true)
 	}
 
 	messages := make([]openai.ChatCompletionMessageParamUnion, 0, 2)

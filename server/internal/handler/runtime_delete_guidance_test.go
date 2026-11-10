@@ -742,15 +742,15 @@ func TestDeleteRuntimeProfile_BuilderRemedyAddressesTheSessionCreator(t *testing
 	dbfx.Insert(t, "member", testutil.Cols{"workspace_id": testWorkspaceID, "user_id": creatorID, "role": "member"})
 	runtimeID, profileID := createProfileBackedRuntime(t, ctx, "Review Shared Builder Host")
 	dbfx.Exec(t, `UPDATE agent_runtime SET visibility='public' WHERE id=$1`, runtimeID)
-	w := httptest.NewRecorder()
-	testHandler.CreateAgentBuilderSession(w, newRequestAs(creatorID, "POST", "/api/agent-builder/sessions", map[string]any{"runtime_id": runtimeID}))
-	if w.Code != http.StatusCreated {
-		t.Fatalf("create builder: %d %s", w.Code, w.Body.String())
-	}
-	var session CreateAgentBuilderSessionResponse
-	if err := json.Unmarshal(w.Body.Bytes(), &session); err != nil {
-		t.Fatal(err)
-	}
+	// Seed an existing historical builder; retired profiles cannot create new ones.
+	builderID := dbfx.Agent(t, "Historical builder", runtimeID, testutil.Cols{
+		"kind": "system", "system_key": "agent_builder:" + runtimeID, "owner_id": creatorID,
+	})
+	session := CreateAgentBuilderSessionResponse{SessionID: dbfx.Insert(t, "chat_session", testutil.Cols{
+		"workspace_id": testWorkspaceID, "agent_id": builderID, "creator_id": creatorID, "title": "Historical builder",
+	})}
+	var w *httptest.ResponseRecorder
+
 	dbfx.Exec(t, `INSERT INTO agent_builder_draft (chat_session_id, workspace_id, draft) VALUES ($1, $2, '{"name":"Saved draft"}'::jsonb)`, session.SessionID, testWorkspaceID)
 	t.Cleanup(func() {
 		testPool.Exec(context.Background(), `DELETE FROM agent_builder_draft WHERE chat_session_id=$1`, session.SessionID)
@@ -806,11 +806,10 @@ func TestDeleteAgentRuntime_OfflineInstanceMatchesTheRealGCDrainGate(t *testing.
 		"runtime_id": otherID, "issue_id": issueID, "status": "deferred",
 		"fire_at": testutil.Raw("now() + interval '30 days'"),
 	})
-	w := httptest.NewRecorder()
-	testHandler.UpdateAgent(w, withURLParam(newRequest("PATCH", "/api/agents/"+agentID, map[string]any{"runtime_id": runtimeID}), "id", agentID))
-	if w.Code != http.StatusOK {
-		t.Fatalf("rebind: %d %s", w.Code, w.Body.String())
-	}
+	// Historical profile bindings can still own tasks pinned to another machine.
+	dbfx.Exec(t, `UPDATE agent SET runtime_id=$1 WHERE id=$2`, runtimeID, agentID)
+	var w *httptest.ResponseRecorder
+
 	// The real archive handler commits archive first and only logs a failure
 	// of its subsequent task-cancellation transaction. It still returns 200.
 	h := *testHandler

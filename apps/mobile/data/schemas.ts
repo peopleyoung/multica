@@ -489,6 +489,7 @@ export const EMPTY_ACTIVE_TASKS_RESPONSE: ActiveTasksResponse = { tasks: [] };
 
 export const UserSchema: z.ZodType<User> = z.object({
   id: z.string(),
+  username: z.string().nullable().default(null),
   name: z.string().default(""),
   email: z.string().default(""),
   avatar_url: z.string().nullable().default(null),

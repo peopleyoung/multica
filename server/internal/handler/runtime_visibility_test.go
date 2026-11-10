@@ -26,10 +26,12 @@ func TestCanUseRuntimeForAgent_Pure(t *testing.T) {
 	otherUserID := "22222222-2222-2222-2222-222222222222"
 
 	privateRT := db.AgentRuntime{
+		Provider:   "native",
 		OwnerID:    util.MustParseUUID(ownerUserID),
 		Visibility: "private",
 	}
 	publicRT := db.AgentRuntime{
+		Provider:   "native",
 		OwnerID:    util.MustParseUUID(ownerUserID),
 		Visibility: "public",
 	}
@@ -130,7 +132,7 @@ func runtimeVisibilityFixture(t *testing.T) (runtimeID, runtimeOwnerID, plainMem
 			workspace_id, daemon_id, name, runtime_mode, provider, status,
 			device_info, metadata, owner_id, visibility, last_seen_at
 		)
-		VALUES ($1, NULL, 'Visibility Test Runtime', 'cloud', 'visibility_test_provider', 'online', 'visibility test', '{}'::jsonb, $2, 'private', now())
+		VALUES ($1, NULL, 'Visibility Test Runtime', 'cloud', 'native', 'online', 'visibility test', '{}'::jsonb, $2, 'private', now())
 		RETURNING id
 	`, testWorkspaceID, runtimeOwnerID).Scan(&runtimeID); err != nil {
 		t.Fatalf("create runtime: %v", err)
@@ -346,8 +348,8 @@ func TestPrivateRuntimeReadEndpointsHideKnownRuntimeFromNonOwners(t *testing.T) 
 	w := httptest.NewRecorder()
 	req := withURLParam(newRequestAs(runtimeOwnerID, http.MethodPost, "/api/runtimes/"+runtimeID+"/models", nil), "runtimeId", runtimeID)
 	testHandler.InitiateListModels(w, req)
-	if w.Code != http.StatusOK {
-		t.Fatalf("owner model discovery: expected 200, got %d: %s", w.Code, w.Body.String())
+	if w.Code != http.StatusServiceUnavailable {
+		t.Fatalf("owner model discovery without deployment model: expected 503, got %d: %s", w.Code, w.Body.String())
 	}
 
 	if _, err := testPool.Exec(context.Background(), `UPDATE agent_runtime SET visibility = 'public' WHERE id = $1`, runtimeID); err != nil {
@@ -356,8 +358,8 @@ func TestPrivateRuntimeReadEndpointsHideKnownRuntimeFromNonOwners(t *testing.T) 
 	w = httptest.NewRecorder()
 	req = withURLParam(newRequestAs(plainMemberID, http.MethodPost, "/api/runtimes/"+runtimeID+"/models", nil), "runtimeId", runtimeID)
 	testHandler.InitiateListModels(w, req)
-	if w.Code != http.StatusOK {
-		t.Fatalf("public runtime model discovery: expected 200, got %d: %s", w.Code, w.Body.String())
+	if w.Code != http.StatusServiceUnavailable {
+		t.Fatalf("public runtime model discovery without deployment model: expected 503, got %d: %s", w.Code, w.Body.String())
 	}
 }
 

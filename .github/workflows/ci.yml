@@ -535,17 +535,13 @@ jobs:
 
       - name: Test Windows execution-environment isolation
         working-directory: server
-        # Keep this job scoped to the runtime regression it exists to prove.
-        # The package's legacy OpenClaw HOME tests are not Windows-safe and are
-        # outside this PR; the normal backend job still runs the full package.
+        # Verify native workdir isolation with real Windows process semantics.
         run: go test ./internal/daemon/execenv -run '^TestPrepareIsolated_WindowsKillsDescendantBeforeRetry$' -count=1 -timeout=5m
 
       - name: Test Windows daemon local-skill discovery
         working-directory: server
-        # These fixtures must redirect both the Windows user profile and the
-        # platform-native Hermes home; otherwise discovery scans the runner's
-        # real skills instead of the test directories.
-        run: go test ./internal/daemon -v -run '^(TestListRuntimeLocalSkills_HermesFollowsTaskHome|TestLocalSkills_DiscoversACPProviderRoots)$' -count=1 -timeout=5m
+        # Fixtures redirect the user home so discovery stays in test directories.
+        run: go test ./internal/daemon -v -run '^TestListRuntimeLocalSkills_' -count=1 -timeout=5m
 
       - name: Test Windows Git Bash temp lifecycle
         working-directory: server
@@ -554,94 +550,10 @@ jobs:
           if (-not (Test-Path -LiteralPath $env:MULTICA_TEST_GIT_BASH)) { throw "Git for Windows is required" }
           go test -tags=gitbashintegration ./internal/daemon -v -run '^(TestWindowsGitBashTaskTempLifecycle|TestTaskMulticaEnvironment.*|TestTaskTempBaseDir)$' -count=1 -timeout=5m
 
-      - name: Test Windows agent launcher argv/stdin handling
+      - name: Test Windows native execution and tools
         working-directory: server
-        # Agent prompts must never reach a Windows launcher through argv: the
-        # official cursor-agent.ps1, pi.ps1, and qwen.ps1 launch native children with
-        # `$args`, and PowerShell re-serialises them onto the child command
-        # line. Under
-        # Legacy native argument passing (powershell.exe 5.1, pwsh <= 7.2) a
-        # prompt holding embedded quotes is re-tokenised and fragments like
-        # `-X` become flags (#5649). Only a real PowerShell host proves this,
-        # so it cannot live in the ubuntu backend job. Scoped to the launcher
-        # tests, which are windows-tagged and therefore run nowhere else today;
-        # the backend job still runs the full package on Linux.
-        # -v so a silent skip (no PowerShell host resolved, or a -run pattern
-        # that stops matching) is visible in the log instead of passing as "ok".
-        run: go test ./pkg/agent -v -run '^(TestCursorExecutePromptSurvivesPowerShellShim|TestPiExecutePromptSurvivesPowerShellShim|TestQwenExecutePromptSurvivesPowerShellShim|TestPlatformCursorInvocation|TestPlatformCopilotInvocation|TestPlatformPiInvocation|TestPlatformQwenInvocation)' -count=1 -timeout=5m
-
-      - name: Test Windows OpenCode oversized prompt reaches stdin
-        working-directory: server
-        # #6538: the daemon inlined the whole task prompt as an argv element,
-        # so every OpenCode task whose prompt cleared CreateProcess's 32,767
-        # character lpCommandLine limit failed to start at all, with Go
-        # reporting ERROR_FILENAME_EXCED_RANGE as the misleading "The filename
-        # or extension is too long". Only a real CreateProcess enforces that
-        # ceiling, so this cannot run in the ubuntu backend job. The test
-        # spawns a native .exe directly (a Chocolatey-installed opencode.exe is
-        # a real PE binary, not a .cmd shim) with an oversized prompt and pins
-        # that the process starts, argv stays free of the prompt, and the full
-        # payload arrives on stdin.
-        # -v so a silent skip or a -run pattern that stops matching is visible
-        # in the log instead of passing as "ok".
-        run: go test ./pkg/agent -v -run '^TestOpencodeExecuteOversizedPromptStartsOnWindows$' -count=1 -timeout=5m
-
-      - name: Test Windows agent process-tree ownership
-        working-directory: server
-        # A Job Object is the only way to prove whole-tree termination on
-        # Windows, and only a real Windows runner can exercise it: that a
-        # grandchild dies with the tree that owns it, that an unowned process
-        # still reports cleanup as unconfirmed, and that a descendant holding
-        # inherited stdout neither keeps Result blocked nor survives cleanup.
-        # -v makes RUN/PASS evidence explicit in CI logs.
-        run: go test ./pkg/agent -v -run '^(TestStartOwnedProcessTreeCapturesImmediateDescendants|TestStartOwnedProcessTreeLeavesNoSuspendedChild|TestWaitProcessGroupGoneWithoutOwnershipReportsUnconfirmed|TestCodexInitializeRetrySupportedWithOwnedProcessTree|TestCodexWindowsDescendantsDieWithTheOwnedProcessTree|TestCodeArtsWindowsCancellationTerminatesDescendants)$' -count=1 -timeout=5m
-
-      - name: Test bounded CLI output collection on Windows
-        working-directory: server
-        # MUL-5467: RunCollect / RunCollectQuiet own the pipes as well as the
-        # process tree on the OpenClaw CLI paths, which outputOwned cannot. A real
-        # Windows host proves its Job Object owns and
-        # terminates descendants, a CLI that prints its answer and then refuses
-        # to exit still yields that answer, a response still streaming at the
-        # deadline is NOT reported as success, and no collector goroutine
-        # outlives the call. Unix uses process groups, so it cannot exercise this
-        # platform lifecycle.
-        # -v so a skip (a -run pattern that stops matching) is visible in the log
-        # instead of passing as "ok".
-        run: go test ./pkg/agent -v -run '^TestWindowsRunCollect' -count=1 -timeout=5m
-
-      - name: Test Windows Pi session lock leaves the transcript readable
-        working-directory: server
-        # #7840: the session lock claimed the transcript itself, and Windows
-        # byte-range locks are mandatory. Pi's own read of the file we hand it
-        # through --session failed with EBUSY, so every Pi/omp task on Windows
-        # died ~0.5s after launch. Unix flock is advisory and never reproduces
-        # it, which is exactly how the regression shipped; the tests are
-        # windows-tagged and therefore run nowhere else today.
-        # -v so a skip (a -run pattern that stops matching) is visible in the
-        # log instead of passing as "ok".
-        run: go test ./pkg/agent -v -run '^TestPiSessionFileLock' -count=1 -timeout=5m
-
-      - name: Test Windows OpenClaw npm shim interpreter resolution
-        working-directory: server
-        # #6061: every OpenClaw task failed execenv prep on a Windows host with
-        # a bare `exit status 1` and no stderr. A batch shim resolves and runs
-        # fine while the `node` it re-execs is unreachable, and npm's real
-        # template prefers a co-located node.exe over PATH — none of which can
-        # be proven without a real cmd.exe host. These tests pin: the positive
-        # control (node on PATH → success), that a missing node surfaces
-        # cmd.exe's own stderr (the first run of this job disproved #6061's
-        # premise that it does not), that a genuinely silent shim DOES reach the
-        # new diagnostic, that a co-located interpreter is credited, that a
-        # context timeout is not misdiagnosed as a missing interpreter, and that
-        # TEMP/TMP are NOT load-bearing (the originally reported root cause,
-        # since retracted upstream).
-        # Scoped to the windows-tagged shim tests — the package's legacy
-        # OpenClaw HOME tests are not Windows-safe; the backend job still runs
-        # the full package plus the cross-platform half on Linux.
-        # -v so a skip (no node on the runner) is visible instead of passing
-        # silently as "ok".
-        run: go test ./internal/daemon/execenv -v -run '^TestWindowsOpenclawShim' -count=1 -timeout=5m
+        # Exercise the native engine, MCP transport and bounded tool host on Windows.
+        run: go test ./internal/daemon/engine ./internal/daemon/mcpclient ./internal/daemon/tools ./internal/daemon/processtree -v -count=1 -timeout=5m
 
       - name: Test Windows workdir containment guard in the CLI
         if: ${{ needs.changes.outputs.backend == 'true' }}
@@ -705,21 +617,9 @@ jobs:
 
       - name: Test Windows directory-junction link safety
         working-directory: server
-        # MUL-6000: the per-task codex-home links the user's real skills into
-        # the task directory instead of copying them. On Windows that link is a
-        # directory junction whenever os.Symlink is denied (no Developer Mode),
-        # and a junction is the one link shape a ModeSymlink check misses:
-        # since Go 1.23 os.Lstat reports it as ModeDir|ModeIrregular with no
-        # ModeSymlink bit, while its DirEntry still answers IsDir() == true, so
-        # filepath.WalkDir descends into the target. Two claims about Windows
-        # itself cannot be made on ubuntu: that the per-task skills wipe
-        # (os.RemoveAll) drops the junction rather than the user's files, and
-        # that the GC's artifact sweep and size accounting refuse to walk
-        # through one. The tests call mklink /J directly so the junction shape
-        # is exercised even on a runner where symlinks are permitted.
-        # -v so a skip is visible instead of passing silently as "ok".
+        # Native context and GC must not follow directory junctions into user data.
         run: |
-          go test ./internal/daemon/execenv -v -run '^(TestSeedUserCodexSkills|TestHydrateCodexSkills)' -count=1 -timeout=5m
+          go test ./internal/daemon/execenv -v -run '^TestNative' -count=1 -timeout=5m
           go test ./internal/daemon -v -run '^(TestCleanTaskArtifacts_DoesNotFollowDirectoryJunction|TestTaskSize_DoesNotCountDirectoryJunction)$' -count=1 -timeout=5m
 
       - name: Test Windows task temp dir sweep survives a sharing violation
@@ -734,16 +634,6 @@ jobs:
         # removes the directory once the handle closes.
         # -v so a skip is visible instead of passing silently as "ok".
         run: go test ./internal/daemon/execenv -v -run '^TestPruneTaskTempDirsSurvivesRealSharingViolation$' -count=1 -timeout=5m
-
-      - name: Test Windows agent executable junction resolution
-        working-directory: server
-        # The standalone Codex installer exposes bin as a directory junction.
-        # filepath.EvalSymlinks cannot traverse that reparse-point shape, so
-        # only a real Windows filesystem proves both PATH discovery and an
-        # explicitly configured path reach the release executable. The same job
-        # covers the npm shape, where the entry point is a `.cmd` shim that only
-        # the command interpreter can run.
-        run: go test ./internal/daemon -v -run '^(TestCanonicalExecutablePath|TestTrimExtendedLengthPrefix|TestResolveAgentExecutablePathKeeps|TestResolveAgentExecutablePath_ProfileOverride|TestResolveAgentEntry(FollowsRetargetedInstallerJunction|CanonicalizesRediscoveredJunction|ForLaunchKeepsCmdShimLaunchable|ForLaunchRejectsUnverifiedInitialJunctionTarget|ForLaunchRejectsRediscoveredJunctionWhenFinalPathResolutionFails|DoesNotSharePreRetargetSingleflightResult|ForLaunchFailsWhenJunctionKeepsRetargeting)|TestHandleTaskReportsWindowsCodexProcessStartFailure)' -count=1 -timeout=5m
 
       - name: Test Windows task workdirs under a junctioned workspaces root
         working-directory: server
@@ -765,28 +655,6 @@ jobs:
         working-directory: server
         run: go build ./cmd/multica
 
-      - name: Test Windows Cursor background ownership
-        working-directory: server
-        # Cursor's background shell is captured through a second Job Object, and
-        # TestCaptureCursorBackgroundProcessRejectsForeignJob is windows-tagged,
-        # so it builds nowhere else. This used to be its own windows-latest job
-        # on the same runtime scope as this one; same runner, same package, same
-        # concern, so it is a step here instead of a second runner per merge.
-        # Last on purpose: absorbing another job's steps means this job's own
-        # failure modes now truncate that job's coverage too, and Cursor
-        # ownership is the newest arrival, not the load-bearing one. The ubuntu
-        # backend job still covers the untagged and Unix arms.
-        run: go test -race ./pkg/agent -v -run 'TestCursorBackground|TestCaptureCursorBackground' -count=1 -timeout=5m
-
-  # The only macOS runner here, and the only place cursor_background_process_darwin.go
-  # is ever built: it signals a process group through XNU's per-process unique
-  # identity so a recycled PID cannot redirect a kill, and the two tests pinning
-  # that are `//go:build darwin`. Windows keeps its arm as a step in
-  # windows-execenv, but macOS has no sibling job to join, and this covers one
-  # integration's background shell rather than the shared launch path every
-  # agent uses. So the daily full run carries it instead of charging every
-  # backend merge for a macOS runner; `full` also means the stress counts below
-  # are now the only finalization pass, replacing the single-count merge variant.
   macos-runtime:
     needs: changes
     if: ${{ needs.changes.outputs.full == 'true' }}
@@ -797,26 +665,12 @@ jobs:
         with:
           go-version: "~1.26.9"
           cache-dependency-path: server/go.sum
-      - name: Verify Cursor background lifecycle and watchdog races
-        shell: bash
+      - name: Verify native runtime and process cleanup
         working-directory: server
-        # Explicit, verbose selection prevents the Unix regression from silently
-        # disappearing behind a build tag.
-        run: |
-          go test -race ./pkg/agent -v -run 'TestCursorBackground|TestCaptureCursorBackground' -count=1
-          go test -race ./internal/daemon -v -run 'Test.*Background.*Watchdog|Test.*IdleWatchdog' -count=1
-
-      - name: Stress macOS finalization
-        shell: bash
+        run: go test -race ./internal/daemon/engine ./internal/daemon/tools ./internal/daemon/mcpclient ./internal/daemon/processtree -count=1 -timeout=5m
+      - name: Verify cgo-free native daemon build
         working-directory: server
-        run: |
-          go test ./pkg/agent -run '^TestCursorBackgroundLifecycle/finish$' -count=5
-          go test -race ./pkg/agent -run '^TestCursorBackgroundLifecycle/finish$' -count=5
-
-      - name: Verify cgo-free macOS ownership
-        shell: bash
-        working-directory: server
-        run: CGO_ENABLED=0 go test ./pkg/agent -run '^TestCaptureCursorBackground(KernelRejectsStaleIdentity|DetachedSession|LateDescendant)$' -count=1
+        run: CGO_ENABLED=0 go build ./cmd/multica
 
   image-budget:
     # Soft gate against the 21.7MB of raw PNG/JPG that MUL-6352 cleared out:

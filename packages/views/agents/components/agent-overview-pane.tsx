@@ -31,12 +31,11 @@ import { PAGE_GUTTER, PAGE_RAIL } from "../../layout/page-header";
 import { ActivityTab } from "./tabs/activity-tab";
 import { InstructionsTab } from "./tabs/instructions-tab";
 import { SkillsTab } from "./tabs/skills-tab";
+import { NativeRuntimeConfigTab } from "./tabs/native-runtime-config-tab";
 import { EnvTab } from "./tabs/env-tab";
-import { CustomArgsTab } from "./tabs/custom-args-tab";
 import { McpConfigTab } from "./tabs/mcp-config-tab";
 import { AgentMcpTab } from "./tabs/agent-mcp-tab";
 import { IntegrationsTab } from "./tabs/integrations-tab";
-import { RuntimeConfigTab } from "./tabs/runtime-config-tab";
 import { AgentDetailInspector } from "./agent-detail-inspector";
 import { AgentAccessSettings } from "./agent-access-settings";
 import { AgentOverviewSummary } from "./agent-overview-summary";
@@ -84,11 +83,10 @@ const CAPABILITY_TABS: SecondaryTab[] = [
 ];
 
 const SETTINGS_TABS: SecondaryTab[] = [
+  { id: "runtime_config", labelKey: "runtime_config" },
   { id: "general", labelKey: "general" },
   { id: "access", labelKey: "access" },
   { id: "env", labelKey: "environment" },
-  { id: "custom_args", labelKey: "custom_args" },
-  { id: "runtime_config", labelKey: "runtime_config" },
 ];
 
 const TOP_TABS: { id: DetailSection; labelKey: DetailSection }[] = [
@@ -227,7 +225,7 @@ export function AgentOverviewPane({
         // showing the tab to anyone else guarantees a 403 on "Reveal & edit".
         // The server stays the boundary; this only removes a dead entry point.
         if (tab.id === "env") return canEdit;
-        if (tab.id === "runtime_config") return runtime?.provider === "openclaw";
+        if (tab.id === "runtime_config") return runtime?.provider === "native";
         return true;
       }),
     [canEdit, runtime?.provider],
@@ -499,24 +497,13 @@ export function AgentOverviewPane({
                       onUpdate={onUpdate}
                     />
                   )}
+                  {effectiveView === "runtime_config" && runtime?.provider === "native" && (
+                    <NativeRuntimeConfigTab agent={agent} runtime={runtime} canConfigure={canEdit && runtime.owner_id === currentUserId} onSave={(updates) => onUpdate(agent.id, updates)} onDirtyChange={setActiveDirty} />
+                  )}
                   {effectiveView === "env" && (
                     <EnvTab agent={agent} onDirtyChange={setActiveDirty} />
                   )}
-                  {effectiveView === "custom_args" && (
-                    <CustomArgsTab
-                      agent={agent}
-                      runtimeDevice={runtime ?? undefined}
-                      onSave={(updates) => onUpdate(agent.id, updates)}
-                      onDirtyChange={setActiveDirty}
-                    />
-                  )}
-                  {effectiveView === "runtime_config" && (
-                    <RuntimeConfigTab
-                      agent={agent}
-                      onSave={(updates) => onUpdate(agent.id, updates)}
-                      onDirtyChange={setActiveDirty}
-                    />
-                  )}
+
                 </div>
               </div>
             </section>

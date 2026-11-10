@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/multica-ai/multica/server/internal/auth"
+"github.com/multica-ai/multica/server/internal/testutil"
 )
 
 // authRequestWithAgent makes a request the server resolves as coming from an
@@ -170,16 +171,10 @@ func getAgentID(t *testing.T) string {
 // It reuses the same runtime as the first agent.
 func createSecondAgent(t *testing.T) string {
 	t.Helper()
-	// Fetch the first agent to get its runtime_id.
-	resp := authRequest(t, "GET", "/api/agents?workspace_id="+testWorkspaceID, nil)
-	var agents []map[string]any
-	readJSON(t, resp, &agents)
-	if len(agents) == 0 {
-		t.Fatal("no agents in test workspace")
-	}
-	runtimeID := agents[0]["runtime_id"].(string)
+	fx := testutil.New(testPool, testWorkspaceID, testUserID)
+    runtimeID := fx.Runtime(t, "Second native runtime", testutil.Cols{"provider":"native", "daemon_id":fmt.Sprintf("second-agent-%d", time.Now().UnixNano())})
 
-	resp = authRequest(t, "POST", "/api/agents?workspace_id="+testWorkspaceID, map[string]any{
+	resp := authRequest(t, "POST", "/api/agents?workspace_id="+testWorkspaceID, map[string]any{
 		"name":       fmt.Sprintf("Second Test Agent %d", time.Now().UnixNano()),
 		"runtime_id": runtimeID,
 		"visibility": "workspace",

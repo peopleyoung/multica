@@ -233,6 +233,7 @@
     "service_tier_clear_title": "速度の上書きをクリアし、ローカルの Codex 設定に任せます"
   },
   "model_dropdown": {
+    "deployment_unavailable": "モデル設定を利用できません。デプロイ管理者に連絡してください。",
     "label": "モデル",
     "select_runtime_first": "先にランタイムを選択してください",
     "default_provider": "デフォルト（プロバイダー）",
@@ -240,7 +241,9 @@
     "managed_by_runtime_title": "このランタイムがモデル選択を管理します。",
     "managed_by_runtime_hint": "ランタイムホストでモデルを設定してください（例: Hermes は自身の設定ファイルから読み込みます）。",
     "discovery_failed": "検出に失敗しました",
-    "clear_full": "選択をクリア（プロバイダーのデフォルトを使用）"
+    "clear_full": "選択をクリア（プロバイダーのデフォルトを使用）",
+    "workspace_default": "ワークスペースの既定 ({{model}})",
+    "save_failed": "モデルを保存できませんでした"
   },
   "tabs": {
     "overview": "概要",
@@ -260,7 +263,7 @@
     "mcp_config": "MCP",
     "composio_mcp": "MCP アプリ",
     "integrations": "連携",
-    "runtime_config": "ルーティング",
+    "runtime_config": "ランタイム設定",
     "discard_dialog_title": "保存していない変更を破棄しますか？",
     "discard_dialog_description": "このタブに保存していない変更があります。今移動すると変更は破棄されます。",
     "discard_keep": "編集を続ける",
@@ -641,6 +644,37 @@
       "started_prefix": "{{when}} に開始",
       "dispatched_prefix": "{{when}} にディスパッチ",
       "queued_prefix": "{{when}} に待機開始"
+    },
+    "native_runtime": {
+      "host_limits": "変更は次回の実行から適用され、ホストの許可範囲に制限されます。",
+      "owner_only": "実行機能を変更できるのはランタイム所有者のみです。",
+      "offline": "ランタイムはオフラインです。最後に報告された権限を表示しています。",
+      "write_files": "作業ディレクトリへのファイル書き込み",
+      "host_allowed": "ホストが許可",
+      "host_disabled": "ホストが無効化",
+      "shell": "スクリプトとコマンドの実行",
+      "shell_effect": "コマンドはホストユーザーとして実行され、ネットワークや作業ディレクトリ外のファイルにアクセスできます。長いコマンドは状態とログを確認できるジョブ ID を返します。ローカルジョブはタスク終了時に停止します。",
+      "services": "外部サービス",
+      "approved_origins": "許可されたオリジン",
+      "none": "なし",
+      "service_number": "サービス {{number}}",
+      "name": "サービス名",
+      "base_url": "API ベース URL",
+      "token_env": "認証情報の環境変数名",
+      "env_help": "認証情報はこのエージェントの環境変数設定に保存し、ここには変数名のみ入力してください。認証不要の場合は空欄にします。",
+      "auth_scheme": "認証方式",
+      "service_write": "サービスデータの変更を許可",
+      "remove_service": "サービスを削除",
+      "add_service": "サービスを追加",
+      "invalid": "名前、URL、環境変数名、ホスト権限を確認してください。サービス名は一意にしてください。",
+      "host_setup": "ホスト権限の設定",
+      "host_setup_help": "ホスト所有者が MULTICA_NATIVE_ALLOW_WRITE、MULTICA_NATIVE_ALLOW_SHELL、MULTICA_NATIVE_HTTP_ORIGINS（カンマ区切りのオリジン）を設定し、ランタイムを再起動します。既定では GET のみ許可され、変更を有効にすると POST、PUT、PATCH、DELETE も許可されます。",
+      "save": "保存",
+      "token_env_placeholder": "CVAT_TOKEN",
+      "auth_bearer": "Bearer",
+      "auth_token": "Token (CVAT)",
+      "remote_environment": "リモート実行環境を使用",
+      "remote_environment_help": "multica_jobs サービスが必要です。ファイル、コマンド、成果物、端末はその作業ディレクトリを共有します。コマンドの実行やファイルの変更には、サービスへの書き込みを許可してください。"
     }
   },
   "char_counter": {
@@ -811,6 +845,7 @@
       "environment_prepare_failed": "実行環境を準備できませんでした",
       "runtime_access_denied": "このエージェントはプライベートランタイムで実行できないため、返信できませんでした。ランタイムを公開にするか、所有者が利用できるランタイムへエージェントを再設定/コピーしてください。",
       "invalid_task_identity": "実行のエージェント情報が一致しません",
+      "native_tool_outcome_unknown": "以前のツール操作の結果が未確認です。リモートジョブやファイルを確認し、チェックポイントを復旧してから続行してください。再試行だけでは解消しません。",
       "agent_error_provider_auth_or_access": "プロバイダーの認証に失敗しました",
       "agent_error_provider_quota_limit": "プロバイダーのクォータを使い切りました",
       "agent_error_provider_capacity_or_rate_limit": "プロバイダーによるレート制限",

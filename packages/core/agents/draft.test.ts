@@ -196,7 +196,7 @@ describe("agent draft execution overrides", () => {
       duplicateSource: sourceAgent(),
     });
 
-    expect(request.custom_args).toEqual(["--verbose"]);
+    expect(request.custom_args).toBeUndefined();
     expect(request.max_concurrent_tasks).toBe(9);
     expect(request.thinking_level).toBe("high");
   });
@@ -261,9 +261,9 @@ describe("agent draft execution overrides", () => {
     expect(duplicate).toMatchObject({
       name: "Fast Codex copy",
       runtimeId: "runtime-1",
-      model: "gpt-5.6-sol",
-      thinkingLevel: "high",
-      serviceTier: "priority",
+      model: "",
+      thinkingLevel: "",
+      serviceTier: "",
     });
     expect([...duplicate.skillIds]).toEqual(["skill-1"]);
   });

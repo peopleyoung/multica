@@ -350,7 +350,7 @@ func (h *Handler) JoinByShareLink(w http.ResponseWriter, r *http.Request) {
 	var settledInvitationID pgtype.UUID
 	pendingInv, pendingErr := qtx.GetPendingInvitationByEmail(r.Context(), db.GetPendingInvitationByEmailParams{
 		WorkspaceID:  link.WorkspaceID,
-		InviteeEmail: strings.ToLower(user.Email),
+		InviteeEmail: strings.ToLower(verifiedInvitationEmail(user)),
 	})
 	switch {
 	case pendingErr == nil:

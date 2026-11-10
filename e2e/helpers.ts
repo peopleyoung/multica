@@ -29,7 +29,7 @@ export async function reloadAppPage(page: Page) {
 
 /**
  * Log in as the default E2E user and ensure the workspace exists first.
- * Authenticates via API (send-code → DB read → verify-code), then injects
+ * Authenticates via API (test account provisioning → password login), then injects
  * the token into localStorage so the browser session is authenticated.
  *
  * Returns the E2E workspace slug so callers can build workspace-scoped URLs.

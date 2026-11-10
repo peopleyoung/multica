@@ -14,13 +14,8 @@ import (
 func TestCreateIssueAssignedToSquadEnqueuesLeader(t *testing.T) {
 	ctx := context.Background()
 
-	// Look up the seeded test agent — it has a runtime, so it can lead a squad.
-	var leaderID string
-	if err := testPool.QueryRow(ctx, `
-		SELECT id FROM agent WHERE workspace_id = $1 ORDER BY created_at ASC LIMIT 1
-	`, testWorkspaceID).Scan(&leaderID); err != nil {
-		t.Fatalf("load test agent: %v", err)
-	}
+	// Keep readiness independent of how long earlier handler tests ran.
+	leaderID := dbfx.Agent(t, "squad assignment leader", dbfx.Runtime(t, "squad assignment"))
 
 	// Create a squad with that agent as leader.
 	var squadID string

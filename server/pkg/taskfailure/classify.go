@@ -87,6 +87,21 @@ func Classify(rawError string) Reason {
 	lower := strings.ToLower(trimmed)
 
 	switch {
+	case strings.Contains(lower, "native tool outcome is unknown"),
+		strings.Contains(lower, "native tool interrupted; outcome is unknown"):
+		return ReasonNativeToolOutcomeUnknown
+
+	case strings.Contains(lower, "native model request rejected"), strings.Contains(lower, `"code":"model_request_rejected"`):
+		return ReasonAgentMissingConfig
+	case strings.Contains(lower, "native model authentication failed"), strings.Contains(lower, `"code":"model_authentication_failed"`):
+		return ReasonAgentProviderAuthOrAccess
+	case strings.Contains(lower, "native model upstream returned an error"), strings.Contains(lower, `"code":"model_upstream_error"`):
+		return ReasonAgentProviderServerError
+	case strings.Contains(lower, `"code":"model_not_found"`):
+		return ReasonAgentModelNotFoundOrUnavailable
+	case strings.Contains(lower, `"code":"model_rate_limited"`):
+		return ReasonAgentProviderCapacityOrRateLimit
+
 	// A concurrent-request rejection can contain both "access token" and HTTP
 	// 403. Its specific semantic witness must beat the broader context and auth
 	// rules below; this classification does not itself make the reason retryable.

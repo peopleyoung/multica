@@ -47,6 +47,25 @@ func batchMessagesRequest(t *testing.T, taskID string, messages []any) *http.Req
 		req.Context(), testWorkspaceID, "batch-messages-daemon"))
 }
 
+func TestReportTaskMessagesSeparatesCallsAndClaimGenerations(t *testing.T) {
+	taskID := seedBatchTask(t, "batch-identities")
+	send := func(callID string) {
+		t.Helper()
+		testutil.Call(t, testHandler.ReportTaskMessages, batchMessagesRequest(t, taskID, []any{
+			map[string]any{"seq": 1, "type": "tool_use", "tool": "read_file", "call_id": callID},
+		})).Want(http.StatusOK)
+	}
+	send("first")
+	send("first")
+	send("another-call-at-the-same-sequence")
+	dbfx.Exec(t, "UPDATE agent_task_queue SET attempt=attempt+1, dispatched_at=now() WHERE id=$1", taskID)
+	send("first")
+	send("first")
+	if got := dbfx.Count(t, "SELECT count(*) FROM task_message WHERE task_id=$1", taskID); got != 3 {
+		t.Fatalf("callback identity merged distinct calls/claims or duplicated a replay: %d rows", got)
+	}
+}
+
 // TestReportTaskMessagesPersistsWholeBatch covers the multi-message shape of the
 // /messages endpoint after it stopped issuing one INSERT per message. The row
 // count, the seq values, and the NULL/non-NULL split all have to survive the
@@ -243,7 +262,7 @@ func TestReportTaskMessagesPublishesInSeqOrder(t *testing.T) {
 //
 // Note what this does and does not guarantee: the batch is consistent, not
 // complete. A failing batch is now lost whole. Closing that gap needs a retry
-// plus a (task_id, seq) uniqueness rule, which is not part of this change.
+// on the daemon side. Repeated callbacks are safe through deduplication keys.
 func TestCreateTaskMessagesBatchIsAtomic(t *testing.T) {
 	if testHandler == nil {
 		t.Skip("database not available")

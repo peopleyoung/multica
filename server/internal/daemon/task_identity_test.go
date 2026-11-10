@@ -18,7 +18,7 @@ func TestRunTaskRejectsMismatchedAgentIdentityBeforePreparation(t *testing.T) {
 		WorkspaceID: "workspace-a",
 		AgentID:     "agent-a",
 		Agent:       &AgentData{ID: "agent-b", Name: "Agent B"},
-	}, "claude", 0, slog.Default())
+	}, "native", 0, slog.Default())
 	if !errors.Is(err, errInvalidTaskIdentity) {
 		t.Fatalf("runTask error = %v, want invalid task identity", err)
 	}

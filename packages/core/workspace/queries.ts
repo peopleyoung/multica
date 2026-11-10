@@ -3,6 +3,7 @@ import { api } from "../api";
 import type { Agent, Squad, Workspace } from "../types";
 
 export const workspaceKeys = {
+  models: (wsId: string) => ["workspaces", wsId, "models"] as const,
   all: (wsId: string) => ["workspaces", wsId] as const,
   list: () => ["workspaces", "list"] as const,
   members: (wsId: string) => ["workspaces", wsId, "members"] as const,
@@ -22,6 +23,10 @@ export const workspaceKeys = {
   assigneeFrequency: (wsId: string) => ["workspaces", wsId, "assignee-frequency"] as const,
   mcpServers: (wsId: string) => ["workspaces", wsId, "mcp-servers"] as const,
 };
+
+export function workspaceModelsOptions(wsId: string) {
+  return queryOptions({ queryKey: workspaceKeys.models(wsId), queryFn: () => api.listWorkspaceModels(wsId), enabled: Boolean(wsId) });
+}
 
 export function workspaceListOptions() {
   return queryOptions({

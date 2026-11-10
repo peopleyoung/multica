@@ -1,3 +1,4 @@
+// @vitest-environment node
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const { invalidateQueries, subscriptionSetups } = vi.hoisted(() => ({
@@ -25,6 +26,8 @@ vi.mock("@/lib/use-ws-subscriptions", () => ({
     subscriptionSetups.push(setup);
   },
 }));
+
+vi.mock("@/data/api", () => ({ api: {} }));
 
 import { usePresenceRealtime } from "./use-presence-realtime";
 
@@ -71,6 +74,7 @@ describe("usePresenceRealtime", () => {
         ["runtimes", "workspace-1"],
         ["agents", "workspace-1"],
         ["agent-task-snapshot", "workspace-1"],
+        ["native-model", "workspace-1"],
       ]),
     );
   });

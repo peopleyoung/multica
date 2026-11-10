@@ -332,7 +332,7 @@ func TestClaimTaskByRuntime_ChatProjectContext(t *testing.T) {
 		"/api/daemon/runtimes/"+runtimeID+"/claim",
 		nil,
 		testWorkspaceID,
-		"chat-project-context-test",
+		runtimeDaemonID(t, runtimeID),
 	)
 	req = withURLParam(req, "runtimeId", runtimeID)
 	testHandler.ClaimTaskByRuntime(w, req)

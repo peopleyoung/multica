@@ -9,7 +9,7 @@ import { useDuplicateDraftSeed } from "./use-duplicate-draft-seed";
 const SOURCE_RUNTIME = {
   id: "runtime-1",
   name: "Codex laptop",
-  provider: "codex",
+  provider: "native",
   status: "online",
   owner_id: "user-1",
   visibility: "private",
@@ -75,9 +75,9 @@ describe("useDuplicateDraftSeed", () => {
     const [draft, runtimeReset] = onSeed.mock.calls[0]!;
     expect(draft).toMatchObject({
       runtimeId: "runtime-1",
-      model: "gpt-5.6-sol",
-      thinkingLevel: "high",
-      serviceTier: "priority",
+      model: "",
+      thinkingLevel: "",
+      serviceTier: "",
     });
     expect(runtimeReset).toBe(false);
   });

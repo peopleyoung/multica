@@ -162,7 +162,7 @@ func createSecondWorkspaceMember(t *testing.T) string {
 	email := fmt.Sprintf("issue-view-other-%s@test.local", t.Name())
 	if err := testPool.QueryRow(ctx, `
 		INSERT INTO "user" (email, name) VALUES ($1, 'View Other')
-		ON CONFLICT (email) DO UPDATE SET name = EXCLUDED.name
+		ON CONFLICT (email) WHERE email <> '' DO UPDATE SET name = EXCLUDED.name
 		RETURNING id
 	`, email).Scan(&userID); err != nil {
 		t.Fatalf("create second user: %v", err)

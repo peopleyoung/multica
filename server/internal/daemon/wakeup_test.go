@@ -102,8 +102,11 @@ func TestRunTaskWakeupConnectionSignalsDisconnect(t *testing.T) {
 	case <-time.After(time.Second):
 		t.Fatal("websocket did not connect")
 	}
-	if got := <-capabilities; !strings.Contains(got, protocol.DaemonCapabilityClaimPollHintsV1) {
-		t.Fatalf("WS capabilities = %q, missing %q", got, protocol.DaemonCapabilityClaimPollHintsV1)
+	got := <-capabilities
+	for _, capability := range []string{protocol.DaemonCapabilityClaimPollHintsV1, protocol.DaemonCapabilityNativeRuntimeV1} {
+		if !strings.Contains(got, capability) {
+			t.Fatalf("WS capabilities = %q, missing %q", got, capability)
+		}
 	}
 	select {
 	case <-taskWakeups: // initial catch-up claim

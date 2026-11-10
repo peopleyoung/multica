@@ -4,13 +4,12 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/go-chi/chi/v5"
+	"github.com/jackc/pgx/v5"
 	"log/slog"
 	"net/http"
 	"strings"
 
-	"github.com/go-chi/chi/v5"
-	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/multica-ai/multica/server/internal/service"
 	"github.com/multica-ai/multica/server/pkg/agent"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
@@ -130,92 +129,9 @@ type createRuntimeProfileRequest struct {
 // CreateRuntimeProfile creates a workspace runtime profile. Admin-gated by the
 // router. protocol_family is validated against the agent backend whitelist.
 func (h *Handler) CreateRuntimeProfile(w http.ResponseWriter, r *http.Request) {
-	wsID := strings.TrimSpace(chi.URLParam(r, "id"))
-	member, ok := h.requireWorkspaceMember(w, r, wsID, "workspace not found")
-	if !ok {
-		return
-	}
-	wsUUID, ok := parseUUIDOrBadRequest(w, wsID, "workspace id")
-	if !ok {
-		return
-	}
-
-	var req createRuntimeProfileRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid request body")
-		return
-	}
-
-	req.DisplayName = strings.TrimSpace(req.DisplayName)
-	req.ProtocolFamily = strings.TrimSpace(req.ProtocolFamily)
-	req.CommandName = strings.TrimSpace(req.CommandName)
-
-	if req.DisplayName == "" {
-		writeError(w, http.StatusBadRequest, "display_name is required")
-		return
-	}
-	req.RuntimeType = agent.ProfileRuntimeType(strings.TrimSpace(req.RuntimeType), req.ProtocolFamily)
-	family, supported := agent.RuntimeProtocolFamily(req.RuntimeType)
-	if !supported {
-		writeError(w, http.StatusBadRequest, "unsupported runtime_type: "+req.RuntimeType)
-		return
-	}
-	if req.ProtocolFamily != "" && req.ProtocolFamily != family {
-		writeError(w, http.StatusBadRequest, "protocol_family does not match runtime_type")
-		return
-	}
-	req.ProtocolFamily = family
-	if req.CommandName == "" {
-		writeError(w, http.StatusBadRequest, "command_name is required")
-		return
-	}
-	if err := validateRuntimeProfileCommandName(req.CommandName); err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
-		return
-	}
-	fixedArgs, err := marshalFixedArgs(req.FixedArgs)
-	if err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
-		return
-	}
-	enabled := true
-	if req.Enabled != nil {
-		enabled = *req.Enabled
-	}
-
-	profile, err := h.Queries.CreateRuntimeProfile(r.Context(), db.CreateRuntimeProfileParams{
-		WorkspaceID:    wsUUID,
-		DisplayName:    req.DisplayName,
-		ProtocolFamily: req.ProtocolFamily,
-		RuntimeType:    req.RuntimeType,
-		CommandName:    req.CommandName,
-		Description:    ptrToText(req.Description),
-		FixedArgs:      fixedArgs,
-		Visibility:     runtimeProfileDefaultVisibility,
-		CreatedBy:      member.UserID,
-		Enabled:        enabled,
-	})
-	if err != nil {
-		if isUniqueViolation(err) {
-			writeError(w, http.StatusConflict, "a runtime profile with this display_name already exists")
-			return
-		}
-		slog.Error("CreateRuntimeProfile failed", "error", err, "workspace_id", wsID)
-		writeError(w, http.StatusInternalServerError, "failed to create runtime profile")
-		return
-	}
-
-	profileID := uuidToString(profile.ID)
-	h.requestDaemonRuntimeProfileRefresh(wsID, profileID)
-	h.publish(protocol.EventDaemonRegister, wsID, "member", uuidToString(member.UserID), map[string]any{
-		"runtime_profile_id": profileID,
-	})
-
-	writeJSON(w, http.StatusCreated, runtimeProfileToResponse(profile))
+	writeError(w, http.StatusGone, "CLI runtime profiles have been retired; use Multica Native")
 }
 
-// ListRuntimeProfiles returns every runtime profile in the workspace.
-// Member-gated by the router.
 func (h *Handler) ListRuntimeProfiles(w http.ResponseWriter, r *http.Request) {
 	wsID := strings.TrimSpace(chi.URLParam(r, "id"))
 	if _, ok := h.requireWorkspaceMember(w, r, wsID, "workspace not found"); !ok {
@@ -278,117 +194,9 @@ type updateRuntimeProfileRequest struct {
 // (changing it would silently repoint bound agents onto a different backend).
 // Admin-gated by the router.
 func (h *Handler) UpdateRuntimeProfile(w http.ResponseWriter, r *http.Request) {
-	wsID := strings.TrimSpace(chi.URLParam(r, "id"))
-	member, ok := h.requireWorkspaceMember(w, r, wsID, "workspace not found")
-	if !ok {
-		return
-	}
-	wsUUID, ok := parseUUIDOrBadRequest(w, wsID, "workspace id")
-	if !ok {
-		return
-	}
-	profileUUID, ok := parseUUIDOrBadRequest(w, chi.URLParam(r, "profileId"), "profile id")
-	if !ok {
-		return
-	}
-
-	var req updateRuntimeProfileRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid request body")
-		return
-	}
-
-	if req.RuntimeType != nil || req.ProtocolFamily != nil {
-		writeError(w, http.StatusBadRequest, "runtime_type and protocol_family are immutable; create a new profile")
-		return
-	}
-
-	params := db.UpdateRuntimeProfileParams{ID: profileUUID, WorkspaceID: wsUUID}
-	if req.DisplayName != nil {
-		name := strings.TrimSpace(*req.DisplayName)
-		if name == "" {
-			writeError(w, http.StatusBadRequest, "display_name cannot be empty")
-			return
-		}
-		params.DisplayName = strToText(name)
-	}
-	if req.CommandName != nil {
-		cmd := strings.TrimSpace(*req.CommandName)
-		if err := validateRuntimeProfileCommandName(cmd); err != nil {
-			writeError(w, http.StatusBadRequest, err.Error())
-			return
-		}
-		params.CommandName = strToText(cmd)
-	}
-	if req.Description != nil {
-		params.Description = ptrToText(req.Description)
-	}
-	if req.FixedArgs != nil {
-		fixedArgs, err := marshalFixedArgs(*req.FixedArgs)
-		if err != nil {
-			writeError(w, http.StatusBadRequest, err.Error())
-			return
-		}
-		params.FixedArgs = fixedArgs
-	}
-	if req.Enabled != nil {
-		params.Enabled = pgtype.Bool{Bool: *req.Enabled, Valid: true}
-	}
-
-	profile, err := h.Queries.UpdateRuntimeProfile(r.Context(), params)
-	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			writeError(w, http.StatusNotFound, "runtime profile not found")
-			return
-		}
-		if isUniqueViolation(err) {
-			writeError(w, http.StatusConflict, "a runtime profile with this display_name already exists")
-			return
-		}
-		slog.Error("UpdateRuntimeProfile failed", "error", err, "profile_id", uuidToString(profileUUID))
-		writeError(w, http.StatusInternalServerError, "failed to update runtime profile")
-		return
-	}
-
-	profileID := uuidToString(profile.ID)
-	h.requestDaemonRuntimeProfileRefresh(wsID, profileID)
-	h.publish(protocol.EventDaemonRegister, wsID, "member", uuidToString(member.UserID), map[string]any{
-		"runtime_profile_id": profileID,
-	})
-
-	writeJSON(w, http.StatusOK, runtimeProfileToResponse(profile))
+	writeError(w, http.StatusGone, "CLI runtime profiles have been retired; use Multica Native")
 }
 
-// maxNamedBlockingAgents caps how many agents the refusal spells out before it
-// falls back to a count. Enough to recognise the machine they sit on without
-// turning a CLI error into a wall of text.
-const maxNamedBlockingAgents = 5
-
-// maxReportedBlockingAgents caps both the rows read inside the delete
-// transaction and the entries put on the response. A profile accumulates agents
-// across every machine that registered it, and neither the sentence nor any
-// client needs the whole set to do its job — the exact size travels separately
-// as active_agent_count.
-const maxReportedBlockingAgents = 20
-
-// profileDeleteBlockedByAgents explains which agents are keeping this profile
-// alive and, crucially, which machine each one is on.
-//
-// A profile is workspace-wide, so its bound agents are frequently on a
-// different machine than the stale instance the user is actually trying to
-// clean up. The old message said only "active agents are still bound to its
-// runtimes", which left that user with no way to tell whether the blocker was
-// the dead machine or the healthy one — and the natural next move, unbinding
-// agents that were working fine, is exactly the damage worth preventing
-// (GH #8456).
-// agents is the bounded sample the query returned; its first row carries the
-// full-set totals every caller here needs.
-//
-// The recovery paths come from those totals, never from the sample. Which rows
-// survive the LIMIT is arbitrary with respect to class — twenty ordinary agents
-// sorting first push the one Mika to position 21 — so advice derived from the
-// visible rows would tell the user to archive blockers that cannot be archived,
-// which is the defect this whole change set removes.
 func profileDeleteBlockedByAgents(profileName string, agents []db.ListActiveAgentsByProfileRow) map[string]any {
 	if len(agents) == 0 {
 		// Caller only builds a refusal when there is at least one blocker.
@@ -674,3 +482,6 @@ func (h *Handler) requestDaemonRuntimeProfileRefresh(workspaceID, profileID stri
 	}
 	h.DaemonProfileRefresh.NotifyRuntimeProfilesChanged(workspaceID, profileID)
 }
+
+const maxNamedBlockingAgents = 5
+const maxReportedBlockingAgents = 20

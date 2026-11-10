@@ -380,7 +380,7 @@ func (h *Handler) GetMyInvitation(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "failed to load user")
 		return
 	}
-	if strings.ToLower(user.Email) != inv.InviteeEmail && uuidToString(inv.InviteeUserID) != userID {
+	if (!user.EmailVerified || strings.ToLower(user.Email) != inv.InviteeEmail) && uuidToString(inv.InviteeUserID) != userID {
 		writeError(w, http.StatusForbidden, "invitation does not belong to you")
 		return
 	}
@@ -418,7 +418,7 @@ func (h *Handler) ListMyInvitations(w http.ResponseWriter, r *http.Request) {
 
 	rows, err := h.Queries.ListPendingInvitationsForUser(r.Context(), db.ListPendingInvitationsForUserParams{
 		InviteeUserID: user.ID,
-		InviteeEmail:  user.Email,
+		InviteeEmail:  verifiedInvitationEmail(user),
 	})
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to list invitations")
@@ -475,7 +475,7 @@ func (h *Handler) AcceptInvitation(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "failed to load user")
 		return
 	}
-	if strings.ToLower(user.Email) != inv.InviteeEmail && uuidToString(inv.InviteeUserID) != userID {
+	if (!user.EmailVerified || strings.ToLower(user.Email) != inv.InviteeEmail) && uuidToString(inv.InviteeUserID) != userID {
 		writeError(w, http.StatusForbidden, "invitation does not belong to you")
 		return
 	}
@@ -660,7 +660,7 @@ func (h *Handler) DeclineInvitation(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "failed to load user")
 		return
 	}
-	if strings.ToLower(user.Email) != inv.InviteeEmail && uuidToString(inv.InviteeUserID) != userID {
+	if (!user.EmailVerified || strings.ToLower(user.Email) != inv.InviteeEmail) && uuidToString(inv.InviteeUserID) != userID {
 		writeError(w, http.StatusForbidden, "invitation does not belong to you")
 		return
 	}
@@ -710,4 +710,12 @@ func (h *Handler) DeclineInvitation(w http.ResponseWriter, r *http.Request) {
 	})
 
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// Optional account emails are contact data, never proof of invitation ownership.
+func verifiedInvitationEmail(user db.User) string {
+	if user.EmailVerified {
+		return user.Email
+	}
+	return ""
 }

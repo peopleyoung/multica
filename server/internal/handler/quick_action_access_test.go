@@ -29,7 +29,7 @@ func seedPrivateQuickActionOwnedByOther(t *testing.T) string {
 	if err := testPool.QueryRow(ctx, `
 		INSERT INTO "user" (email, name)
 		VALUES ('qa-other@example.test', 'QA Other')
-		ON CONFLICT (email) DO UPDATE SET name = EXCLUDED.name
+		ON CONFLICT (email) WHERE email <> '' DO UPDATE SET name = EXCLUDED.name
 		RETURNING id
 	`).Scan(&otherUserID); err != nil {
 		t.Fatalf("seed other user: %v", err)

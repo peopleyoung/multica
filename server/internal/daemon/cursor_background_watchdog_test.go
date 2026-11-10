@@ -108,7 +108,7 @@ func TestExecuteAndDrain_BackgroundToolWatchdog(t *testing.T) {
 			backend := &backgroundToolBackend{natural: tc.natural, mixed: tc.mixed, invalid: tc.invalid, noResult: tc.noResult}
 			ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 			defer cancel()
-			result, _, err := d.executeAndDrain(ctx, backend, "test", agent.ExecOptions{}, slog.Default(), "background-watchdog", "", new(atomic.Int32))
+			result, _, err := d.executeAndDrain(ctx, backend, "test", agent.ExecOptions{}, slog.Default(), "background-watchdog", new(atomic.Int32))
 			if err != nil || result.Status != tc.status {
 				t.Fatalf("result=%+v error=%v, want %s", result, err, tc.status)
 			}
@@ -215,7 +215,7 @@ func TestExecuteAndDrain_BackgroundNativeCountSurvivesDroppedTranscript(t *testi
 	backend := &backgroundToolBackend{natural: 200 * time.Millisecond, dropTranscript: true}
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
-	result, _, err := d.executeAndDrain(ctx, backend, "test", agent.ExecOptions{}, slog.Default(), "dropped-transcript", "", new(atomic.Int32))
+	result, _, err := d.executeAndDrain(ctx, backend, "test", agent.ExecOptions{}, slog.Default(), "dropped-transcript", new(atomic.Int32))
 	if err != nil || result.Status != "completed" || backend.interrupts.Load() != 0 {
 		t.Fatalf("native tool state lost: %+v err=%v", result, err)
 	}
@@ -243,7 +243,7 @@ func TestCursorBackgroundCapturedDisabledToolWatchdog(t *testing.T) {
 	// Stands in for MULTICA_AGENT_TIMEOUT, which is 0 (unbounded) by default.
 	ctx, cancel := context.WithTimeout(context.Background(), 300*time.Millisecond)
 	defer cancel()
-	result, _, err := d.executeAndDrain(ctx, backend, "test", agent.ExecOptions{}, slog.Default(), "captured-background", "", new(atomic.Int32))
+	result, _, err := d.executeAndDrain(ctx, backend, "test", agent.ExecOptions{}, slog.Default(), "captured-background", new(atomic.Int32))
 	if err != nil {
 		t.Fatalf("executeAndDrain: %v", err)
 	}

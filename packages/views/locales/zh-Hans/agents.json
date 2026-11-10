@@ -241,6 +241,7 @@
     "service_tier_clear_title": "清除速度覆盖，交由本地 Codex 配置决定"
   },
   "model_dropdown": {
+    "deployment_unavailable": "模型配置不可用，请联系部署管理员。",
     "label": "模型",
     "select_runtime_first": "请先选择运行时",
     "default_provider": "默认（提供方）",
@@ -248,7 +249,9 @@
     "managed_by_runtime_title": "模型选择由该运行时管理。",
     "managed_by_runtime_hint": "请在运行时主机上配置模型（例如 Hermes 会从自身配置文件读取）。",
     "discovery_failed": "发现失败",
-    "clear_full": "清除选择（使用提供方默认）"
+    "clear_full": "清除选择（使用提供方默认）",
+    "workspace_default": "工作区默认（{{model}}）",
+    "save_failed": "模型保存失败"
   },
   "tabs": {
     "overview": "概览",
@@ -268,7 +271,7 @@
     "mcp_config": "MCP",
     "composio_mcp": "MCP 应用",
     "integrations": "集成",
-    "runtime_config": "路由",
+    "runtime_config": "运行配置",
     "discard_dialog_title": "放弃未保存的修改？",
     "discard_dialog_description": "当前 tab 有未保存的修改，离开会丢弃这些修改。",
     "discard_keep": "继续编辑",
@@ -743,6 +746,37 @@
       "started_prefix": "{{when}}启动",
       "dispatched_prefix": "{{when}}派发",
       "queued_prefix": "{{when}}排队"
+    },
+    "native_runtime": {
+      "host_limits": "更改在下次运行时生效，执行权限受主机授权范围限制。",
+      "owner_only": "只有运行时所有者可以更改执行能力。",
+      "offline": "运行时已离线，当前显示的是上次上报的权限。",
+      "write_files": "写入工作目录文件",
+      "host_allowed": "主机已授权",
+      "host_disabled": "主机未授权",
+      "shell": "执行脚本和命令",
+      "shell_effect": "命令以主机用户身份运行，可访问网络及工作目录之外的文件。长命令返回作业 ID，可查询状态和日志；本地作业随任务结束而停止。",
+      "services": "外部服务",
+      "approved_origins": "主机允许的服务地址",
+      "none": "无",
+      "service_number": "服务 {{number}}",
+      "name": "服务名称",
+      "base_url": "API 基础地址",
+      "token_env": "凭据环境变量名",
+      "env_help": "请在该智能体的「环境变量」中保存凭据，此处只填写变量名。无需认证时留空。",
+      "auth_scheme": "认证方式",
+      "service_write": "允许修改该服务的数据",
+      "remove_service": "移除服务",
+      "add_service": "添加服务",
+      "invalid": "请检查名称、地址、凭据变量名和主机权限，服务名称不能重复。",
+      "host_setup": "配置主机权限",
+      "host_setup_help": "主机所有者设置 MULTICA_NATIVE_ALLOW_WRITE、MULTICA_NATIVE_ALLOW_SHELL 和 MULTICA_NATIVE_HTTP_ORIGINS（以逗号分隔的服务源地址）后重启运行时。服务默认仅允许 GET，开启修改后也允许 POST、PUT、PATCH 和 DELETE。",
+      "save": "保存",
+      "token_env_placeholder": "CVAT_TOKEN",
+      "auth_bearer": "Bearer",
+      "auth_token": "Token (CVAT)",
+      "remote_environment": "使用远程执行环境",
+      "remote_environment_help": "需配置 multica_jobs 服务。文件、命令、产物和终端共用该服务的工作目录；运行命令或修改文件还需允许服务写入。"
     }
   },
   "char_counter": {
@@ -913,6 +947,7 @@
       "environment_prepare_failed": "无法准备执行环境",
       "runtime_access_denied": "该智能体无法在其私有运行时上运行，暂时无法回复。请将该运行时设为公开，或将智能体重新绑定/复制到其所有者可用的运行时。",
       "invalid_task_identity": "运行身份不匹配",
+      "native_tool_outcome_unknown": "此前工具操作的结果尚未确认。请先核对远端作业或文件并恢复检查点；仅重试任务无法解除此状态。",
       "agent_error_provider_auth_or_access": "提供商认证失败",
       "agent_error_provider_quota_limit": "提供商配额已用尽",
       "agent_error_provider_capacity_or_rate_limit": "受到提供商速率限制",

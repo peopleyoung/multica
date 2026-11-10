@@ -15,7 +15,11 @@
     "title": "智能体",
     "empty": "还没有智能体",
     "search_placeholder": "搜索智能体...",
-    "coming_soon": "智能体功能即将上线。"
+    "coming_soon": "智能体功能即将上线。",
+    "managed_model": "部署模型",
+    "model_unavailable": "模型配置不可用",
+    "needs_migration": "需要迁移到内置运行时",
+    "machine_unavailable": "执行机器不可用"
   },
   "actions": {
     "retry": "重试",

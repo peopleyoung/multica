@@ -251,6 +251,7 @@
     "service_tier_clear_title": "Effacer la surcharge de vitesse et laisser la configuration locale de Codex décider"
   },
   "model_dropdown": {
+    "deployment_unavailable": "Configuration du modèle indisponible. Contactez votre administrateur.",
     "label": "Modèle",
     "select_runtime_first": "Sélectionnez d'abord un runtime",
     "default_provider": "Par défaut (fournisseur)",
@@ -258,7 +259,9 @@
     "managed_by_runtime_title": "Le choix du modèle est géré par ce runtime.",
     "managed_by_runtime_hint": "Configurez le modèle sur l'hôte du runtime (Hermes, par exemple, le lit dans son propre fichier de configuration).",
     "discovery_failed": "échec de la détection",
-    "clear_full": "Effacer la sélection (utiliser la valeur par défaut du fournisseur)"
+    "clear_full": "Effacer la sélection (utiliser la valeur par défaut du fournisseur)",
+    "workspace_default": "Modèle par défaut ({{model}})",
+    "save_failed": "Impossible d’enregistrer le modèle"
   },
   "tabs": {
     "overview": "Vue d'ensemble",
@@ -278,7 +281,7 @@
     "mcp_config": "MCP",
     "composio_mcp": "Applications MCP",
     "integrations": "Intégrations",
-    "runtime_config": "Routage",
+    "runtime_config": "Configuration du runtime",
     "discard_dialog_title": "Abandonner les modifications non enregistrées ?",
     "discard_dialog_description": "Cet onglet contient des modifications non enregistrées. Les quitter maintenant les abandonnera.",
     "discard_keep": "Continuer à modifier",
@@ -758,6 +761,37 @@
       "started_prefix": "Démarrée {{when}}",
       "dispatched_prefix": "Envoyée {{when}}",
       "queued_prefix": "Mise en file d'attente {{when}}"
+    },
+    "native_runtime": {
+      "host_limits": "Les modifications prennent effet à la prochaine exécution, dans les limites autorisées par l’hôte.",
+      "owner_only": "Seul le propriétaire du runtime peut modifier les capacités d’exécution.",
+      "offline": "Le runtime est hors ligne. Les dernières autorisations signalées sont affichées.",
+      "write_files": "Écrire des fichiers dans le dossier de travail",
+      "host_allowed": "Autorisé par l’hôte",
+      "host_disabled": "Désactivé par l’hôte",
+      "shell": "Exécuter des scripts et commandes",
+      "shell_effect": "Les commandes utilisent le compte de l’hôte, avec accès au réseau et aux fichiers hors du dossier de travail. Les commandes longues renvoient un identifiant pour consulter leur état et leurs journaux. Les processus locaux s’arrêtent à la fin de la tâche.",
+      "services": "Services externes",
+      "approved_origins": "Origines autorisées",
+      "none": "Aucune",
+      "service_number": "Service {{number}}",
+      "name": "Nom du service",
+      "base_url": "URL de base de l’API",
+      "token_env": "Variable d’environnement du jeton",
+      "env_help": "Enregistrez le jeton dans les variables d’environnement de cet agent. Saisissez uniquement le nom de la variable ici, ou laissez vide sans authentification.",
+      "auth_scheme": "Mode d’authentification",
+      "service_write": "Autoriser les modifications du service",
+      "remove_service": "Retirer le service",
+      "add_service": "Ajouter un service",
+      "invalid": "Vérifiez les noms, URL, variables et autorisations de l’hôte. Les noms des services doivent être uniques.",
+      "host_setup": "Configurer les autorisations de l’hôte",
+      "host_setup_help": "Le propriétaire définit MULTICA_NATIVE_ALLOW_WRITE, MULTICA_NATIVE_ALLOW_SHELL et MULTICA_NATIVE_HTTP_ORIGINS (origines séparées par des virgules), puis redémarre le runtime. GET est autorisé par défaut ; les modifications autorisent aussi POST, PUT, PATCH et DELETE.",
+      "save": "Enregistrer",
+      "token_env_placeholder": "CVAT_TOKEN",
+      "auth_bearer": "Bearer",
+      "auth_token": "Token (CVAT)",
+      "remote_environment": "Utiliser l’environnement d’exécution distant",
+      "remote_environment_help": "Nécessite le service multica_jobs. Les fichiers, commandes, artefacts et terminaux partagent son répertoire de travail. Autorisez l’écriture du service pour exécuter des commandes ou modifier des fichiers."
     }
   },
   "char_counter": {
@@ -932,6 +966,7 @@
       "environment_prepare_failed": "Impossible de préparer l'environnement d'exécution",
       "runtime_access_denied": "Cet agent ne peut pas s'exécuter sur son runtime privé et n'a donc pas pu répondre. Passez le runtime en public, ou réassociez/copiez l'agent vers un runtime que son propriétaire peut utiliser.",
       "invalid_task_identity": "Identité d'exécution incohérente",
+      "native_tool_outcome_unknown": "Le résultat d’une opération précédente reste inconnu. Vérifiez le processus distant ou les fichiers, puis réconciliez le point de contrôle avant de continuer. Réessayer seul ne résout pas cet état.",
       "agent_error_provider_auth_or_access": "Échec de l'authentification auprès du fournisseur",
       "agent_error_provider_quota_limit": "Quota du fournisseur épuisé",
       "agent_error_provider_capacity_or_rate_limit": "Limite de requêtes du fournisseur atteinte",

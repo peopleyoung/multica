@@ -34,6 +34,7 @@ import (
 	"github.com/multica-ai/multica/server/pkg/agent"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 	"github.com/multica-ai/multica/server/pkg/dbid"
+	"github.com/multica-ai/multica/server/pkg/nativeruntime"
 	"github.com/multica-ai/multica/server/pkg/protocol"
 	"github.com/multica-ai/multica/server/pkg/redact"
 	"github.com/multica-ai/multica/server/pkg/skillbundle"
@@ -195,8 +196,9 @@ func (h *Handler) verifyDaemonWorkspaceAccess(r *http.Request, workspaceID strin
 // ---------------------------------------------------------------------------
 
 type DaemonRegisterRequest struct {
-	WorkspaceID string `json:"workspace_id"`
-	DaemonID    string `json:"daemon_id"`
+	NativeLimits *nativeruntime.Limits `json:"native_limits,omitempty"`
+	WorkspaceID  string                `json:"workspace_id"`
+	DaemonID     string                `json:"daemon_id"`
 	// LegacyDaemonIDs lists prior hostname-derived daemon_ids this machine
 	// may have registered under before switching to a persistent UUID. The
 	// handler merges any matching runtime rows into the new row so agents
@@ -409,6 +411,10 @@ func (h *Handler) DaemonRegister(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
+	if req.NativeLimits != nil {
+		limits := req.NativeLimits.Public()
+		req.NativeLimits = &limits
+	}
 
 	req.WorkspaceID = strings.TrimSpace(req.WorkspaceID)
 	req.DaemonID = strings.TrimSpace(req.DaemonID)
@@ -457,6 +463,27 @@ func (h *Handler) DaemonRegister(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Validate the whole registration before writing any runtime rows.
+	for _, runtime := range req.Runtimes {
+		if normalizeProvider(runtime.Type) != "native" {
+			writeError(w, http.StatusConflict, "External AI runtimes have been retired; upgrade the Multica daemon and migrate existing bindings")
+			return
+		}
+		if normalizeProvider(runtime.Type) == "native" {
+			if daemonID := middleware.DaemonIDFromContext(r.Context()); daemonID != "" && daemonID != req.DaemonID {
+				writeError(w, http.StatusForbidden, "daemon_id does not match token")
+				return
+			}
+			if !requestHasClientCapability(r, protocol.DaemonCapabilityNativeRuntimeV1) {
+				writeNativeProtocolRequired(w)
+				return
+			}
+			if strings.TrimSpace(runtime.ProfileID) != "" {
+				writeError(w, http.StatusBadRequest, "native runtimes do not accept CLI profiles")
+				return
+			}
+		}
+	}
 	resp := make([]AgentRuntimeResponse, 0, len(req.Runtimes))
 	for _, runtime := range req.Runtimes {
 		provider := normalizeProvider(runtime.Type)
@@ -485,10 +512,11 @@ func (h *Handler) DaemonRegister(w http.ResponseWriter, r *http.Request) {
 		// same signal the claim path uses, instead of re-deriving it from a
 		// version string (MUL-5707).
 		metadata, _ := json.Marshal(map[string]any{
-			"version":      runtime.Version,
-			"cli_version":  req.CLIVersion,
-			"launched_by":  req.LaunchedBy,
-			"capabilities": requestClientCapabilities(r),
+			"version":       runtime.Version,
+			"cli_version":   req.CLIVersion,
+			"launched_by":   req.LaunchedBy,
+			"capabilities":  requestClientCapabilities(r),
+			"native_limits": req.NativeLimits,
 		})
 
 		var registered db.AgentRuntime
@@ -657,7 +685,7 @@ func (h *Handler) DaemonRegister(w http.ResponseWriter, r *http.Request) {
 			h.mergeLegacyRuntimes(r, registered, provider, req.LegacyDaemonIDs)
 		}
 
-		resp = append(resp, runtimeToResponse(registered))
+		resp = append(resp, h.runtimeResponse(registered))
 	}
 	for _, failed := range req.FailedProfiles {
 		profileID := strings.TrimSpace(failed.ProfileID)
@@ -740,10 +768,12 @@ func (h *Handler) DaemonRegister(w http.ResponseWriter, r *http.Request) {
 	repoResp := workspaceReposResponse(req.WorkspaceID, ws.Repos, ws.Settings)
 
 	writeJSON(w, http.StatusOK, map[string]any{
-		"runtimes":      resp,
-		"repos":         repoResp.Repos,
-		"repos_version": repoResp.ReposVersion,
-		"settings":      repoResp.Settings,
+		"runtimes":                resp,
+		"repos":                   repoResp.Repos,
+		"repos_version":           repoResp.ReposVersion,
+		"settings":                repoResp.Settings,
+		"server_capabilities":     []string{protocol.DaemonCapabilityRPCV1, protocol.DaemonCapabilityNativeRuntimeV1},
+		"native_runtime_protocol": protocol.NativeRuntimeSupport(),
 	})
 }
 
@@ -1379,7 +1409,7 @@ func (h *Handler) processHeartbeat(ctx context.Context, runtimeID string, suppor
 	ack := &protocol.DaemonHeartbeatAckPayload{
 		RuntimeID:          runtimeID,
 		Status:             "ok",
-		ServerCapabilities: []string{protocol.DaemonCapabilityRPCV1},
+		ServerCapabilities: []string{protocol.DaemonCapabilityRPCV1, protocol.DaemonCapabilityNativeRuntimeV1},
 	}
 
 	probeUpdateCtx, cancelProbeUpdate := context.WithTimeout(ctx, heartbeatHasPendingTimeout)
@@ -1803,6 +1833,7 @@ func (h *Handler) ClaimTasksByRuntime(w http.ResponseWriter, r *http.Request) {
 	// collected separately rather than reusing its map.
 	runtimeByID := make(map[string]db.AgentRuntime, len(foundByID))
 	authorized := make([]pgtype.UUID, 0, len(foundByID))
+	blockedNative := false
 	for _, id := range ids {
 		rt, ok := foundByID[uuidToString(id)]
 		if !ok {
@@ -1818,10 +1849,21 @@ func (h *Handler) ClaimTasksByRuntime(w http.ResponseWriter, r *http.Request) {
 		if rt.DaemonID.Valid && rt.DaemonID.String != req.DaemonID {
 			continue
 		}
+		if rt.Provider != "native" || rt.ProfileID.Valid {
+			continue
+		}
+		if !nativeRuntimeCompatible(r, rt) {
+			blockedNative = true
+			continue
+		}
 		runtimeByID[uuidToString(rt.ID)] = rt
 		authorized = append(authorized, rt.ID)
 	}
 	if len(authorized) == 0 {
+		if blockedNative {
+			writeNativeProtocolRequired(w)
+			return
+		}
 		writeMeasuredJSON(w, http.StatusOK, map[string]any{"tasks": []AgentTaskResponse{}})
 		return
 	}
@@ -2219,7 +2261,7 @@ func (h *Handler) rejectClaimOnWorkspaceMismatch(ctx context.Context, task *db.A
 // returned only in the claim response; its hash is committed atomically with
 // the task-scoped agent token by FinalizeTaskClaim.
 func remoteMCPDaemonTokenForClaim(resp AgentTaskResponse, runtime db.AgentRuntime) (string, []db.CreateDaemonTokenParams, error) {
-	if len(resp.RemoteMCPConnections) == 0 {
+	if len(resp.RemoteMCPConnections) == 0 && runtime.Provider != "native" {
 		return "", nil, nil
 	}
 	if !runtime.DaemonID.Valid || strings.TrimSpace(runtime.DaemonID.String) == "" {
@@ -2347,6 +2389,13 @@ func claimResponseAgentIdentityMatches(resp AgentTaskResponse) bool {
 func (h *Handler) buildClaimedTaskResponse(r *http.Request, task *db.AgentTaskQueue, runtime db.AgentRuntime, runtimeID, runtimeWorkspaceID string) (resp AgentTaskResponse, deliveredCommentIDs []pgtype.UUID, issueSnapshot []byte, agentSkillCount, builtinSkillCount int, failure *claimBuildFailure) {
 	// Build response with fresh agent data (name + skills + custom_env + custom_args).
 	resp = taskToResponse(*task, runtimeWorkspaceID)
+	if runtime.Provider == "native" {
+		inputID, err := h.nativeInputTaskID(r.Context(), *task)
+		if err != nil {
+			return resp, nil, nil, 0, 0, h.rejectClaimSourceLoad(r.Context(), task, err, "native retry input", "")
+		}
+		resp.NativeInputTaskID = inputID
+	}
 	if err := (&service.IssueWakeupService{Tasks: h.TaskService}).CheckClaim(r.Context(), *task); err != nil {
 		if !errors.Is(err, service.ErrWakeupForbidden) {
 			return resp, nil, nil, 0, 0, h.rejectClaimSourceLoad(r.Context(), task, err, "wakeup", resp.WakeupID)
@@ -2691,6 +2740,8 @@ func (h *Handler) buildClaimedTaskResponse(r *http.Request, task *db.AgentTaskQu
 					ID:          task.SquadID,
 					WorkspaceID: issue.WorkspaceID,
 				}); err == nil && uuidToString(squad.LeaderID) == resp.Agent.ID {
+					resp.SquadID = uuidToString(squad.ID)
+					resp.SquadName = squad.Name
 					// Parent-status authority is deliberately NARROWER than
 					// briefing injection. Injection is keyed off is_leader_task
 					// (see above) and therefore also fires on the MUL-3724 path,
@@ -3740,6 +3791,16 @@ func (h *Handler) ClaimTaskByRuntime(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	if !requireExecutableRuntime(w, runtime) {
+		return
+	}
+	if !requireNativeDaemonIdentity(w, r, runtime) {
+		return
+	}
+	if !nativeRuntimeCompatible(r, runtime) {
+		writeNativeProtocolRequired(w)
+		return
+	}
 	runtimeWorkspaceID := uuidToString(runtime.WorkspaceID)
 	authMs = time.Since(start).Milliseconds()
 
@@ -4076,7 +4137,7 @@ func (h *Handler) StartTask(w http.ResponseWriter, r *http.Request) {
 	taskID := chi.URLParam(r, "taskId")
 
 	// Verify the caller owns this task's workspace.
-	_, workspaceID, ok := h.requireDaemonTaskAccessWithWorkspace(w, r, taskID)
+	existingTask, workspaceID, ok := h.requireDaemonTaskAccessWithWorkspace(w, r, taskID)
 	if !ok {
 		return
 	}
@@ -4090,6 +4151,29 @@ func (h *Handler) StartTask(w http.ResponseWriter, r *http.Request) {
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			writeError(w, http.StatusBadRequest, "invalid request body")
 			return
+		}
+	}
+	if existingTask.RuntimeID.Valid {
+		runtime, err := h.Queries.GetAgentRuntimeForWorkspace(r.Context(), db.GetAgentRuntimeForWorkspaceParams{ID: existingTask.RuntimeID, WorkspaceID: parseUUID(workspaceID)})
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "failed to load runtime")
+			return
+		}
+		if !requireExecutableRuntime(w, runtime) {
+			return
+		}
+		{
+			if !requireNativeDaemonIdentity(w, r, runtime) {
+				return
+			}
+			if !nativeRuntimeCompatible(r, runtime) {
+				writeNativeProtocolRequired(w)
+				return
+			}
+			if req.RuntimeID == "" || req.DispatchedAt == "" {
+				writeError(w, http.StatusBadRequest, "native execution requires runtime_id and dispatched_at")
+				return
+			}
 		}
 	}
 	enableTaskSupplement := slices.Contains(req.Capabilities, protocol.DaemonCapabilityTaskSupplementV1)
@@ -5149,6 +5233,7 @@ func (h *Handler) ReportTaskMessages(w http.ResponseWriter, r *http.Request) {
 		// Tri-state through a text[]: "" is NULL, matching how the query maps
 		// every other nullable column in this batch.
 		OutputTruncations: make([]string, 0, n),
+		DedupKeys:         make([]string, 0, n),
 	}
 	createdAts := taskMessageCreatedAts(req.Messages, time.Now().UTC())
 	for i, msg := range req.Messages {
@@ -5158,7 +5243,6 @@ func (h *Handler) ReportTaskMessages(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusInternalServerError, "failed to persist task message")
 			return
 		}
-
 		// Redact sensitive information before persisting or broadcasting.
 		msg.Content = redact.Text(msg.Content)
 		msg.Output = redact.Text(msg.Output)
@@ -5199,6 +5283,12 @@ func (h *Handler) ReportTaskMessages(w http.ResponseWriter, r *http.Request) {
 			inputJSON = string(encoded)
 		}
 
+		// Retransmitting a batch must not duplicate transcript rows, realtime
+		// events or tool counters. Bind opaque keys to the claim and event, while
+		// preserving distinct tool calls if an older daemon reuses a sequence.
+		identity := fmt.Sprintf("%d/%t/%s/%d/%q/%q", task.Attempt, task.DispatchedAt.Valid, task.DispatchedAt.Time.UTC().Format(time.RFC3339Nano), msg.Seq, msg.Type, msg.CallID)
+		digest := sha256.Sum256([]byte(identity))
+		params.DedupKeys = append(params.DedupKeys, hex.EncodeToString(digest[:]))
 		params.Ids = append(params.Ids, pgtype.UUID{Bytes: [16]byte(id), Valid: true})
 		params.Seqs = append(params.Seqs, int32(msg.Seq))
 		params.Types = append(params.Types, msg.Type)
@@ -5232,6 +5322,9 @@ func (h *Handler) ReportTaskMessages(w http.ResponseWriter, r *http.Request) {
 			h.publishTask(protocol.EventTaskMessage, workspaceID, "system", "", taskID,
 				taskMessageToPayload(db.TaskMessage(m), taskID, uuidToString(task.IssueID)))
 		}
+	}
+	for _, m := range created {
+		h.Metrics.RecordToolEvent(m.Tool.String, m.Type)
 	}
 
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})

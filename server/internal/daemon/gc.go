@@ -134,31 +134,6 @@ func (d *Daemon) runGC(ctx context.Context) {
 	// and are never reclaimed by the task walk above.
 	d.pruneRepoWorktreesContext(ctx, root, stats)
 
-	// Reclaim per-issue Codex session stores idle past their TTL. These live
-	// under the shared ~/.codex home (outside WorkspacesRoot) so resume survives
-	// the task GC, which means they need their own bounded lifecycle (MUL-4424).
-	if storesRemoved, storeBytes := execenv.PruneCodexSessionStores(d.cfg.Profile, d.cfg.GCCodexSessionTTL, time.Now(), d.reserveStoreForDeletion, d.logger); storesRemoved > 0 {
-		stats.storesReclaimed += storesRemoved
-		stats.bytesReclaimed += storeBytes
-	}
-
-	// Same for per-agent Hermes memory stores: they outlive the task by design
-	// (that is what fixes #6638), so a deleted agent's memory needs its own
-	// bounded lifecycle. Retention is much longer than the Codex one — these are
-	// a few markdown files, and reclaiming them is user-visible amnesia.
-	if storesRemoved, storeBytes := execenv.PruneHermesMemoryStores(d.cfg.Profile, d.cfg.GCHermesMemoryTTL, time.Now(), d.reserveStoreForDeletion, d.logger); storesRemoved > 0 {
-		stats.hermesMemoryStoresReclaimed += storesRemoved
-		stats.bytesReclaimed += storeBytes
-	}
-
-	// And per-conversation Hermes session stores, which outlive the task for the
-	// same reason (that is what fixes #6806) but hold transcripts rather than
-	// notes — so they get the shorter, Codex-like retention.
-	if storesRemoved, storeBytes := execenv.PruneHermesSessionStores(d.cfg.Profile, d.cfg.GCHermesSessionTTL, time.Now(), d.reserveStoreForDeletion, d.logger); storesRemoved > 0 {
-		stats.hermesSessionStoresReclaimed += storesRemoved
-		stats.bytesReclaimed += storeBytes
-	}
-
 	// Reclaim per-task temp dirs whose owning execution is gone. These are the
 	// agent process's TMPDIR and live under the system temp base, not under
 	// WorkspacesRoot, so the task walk above has never seen them and the only

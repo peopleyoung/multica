@@ -1,0 +1,1 @@
+DROP INDEX CONCURRENTLY IF EXISTS native_session_id_idx;

@@ -224,33 +224,51 @@ func Discover(ctx context.Context, rawEndpoint string, allowedHosts, protocolVer
 	}); err != nil {
 		return nil, "", fmt.Errorf("confirm remote MCP initialization: %w", err)
 	}
-	toolsResponse, _, err := call(ctx, client, endpoint, headers, sessionID, map[string]any{
-		"jsonrpc": "2.0", "id": 2, "method": "tools/list", "params": map[string]any{},
-	})
-	if err != nil {
-		return nil, "", fmt.Errorf("list remote MCP tools: %w", err)
-	}
-	var result struct {
-		Tools []discoveredTool `json:"tools"`
-	}
-	if err := json.Unmarshal(toolsResponse.Result, &result); err != nil {
-		return nil, "", fmt.Errorf("decode tools/list result: %w", err)
-	}
-	tools := make([]Tool, 0, len(result.Tools))
-	seen := map[string]bool{}
-	for _, tool := range result.Tools {
-		if strings.TrimSpace(tool.Name) == "" || seen[tool.Name] {
-			return nil, "", errors.New("remote MCP returned an invalid or duplicate tool name")
+	tools := make([]Tool, 0)
+	seen, cursors := map[string]bool{}, map[string]bool{}
+	cursor := ""
+	for page := 0; ; page++ {
+		if page >= 128 {
+			return nil, "", errors.New("remote MCP tools/list exceeded 128 pages")
 		}
-		seen[tool.Name] = true
-		canonical, err := canonicalJSON(tool.InputSchema)
-		if err != nil {
-			return nil, "", fmt.Errorf("tool %q input schema: %w", tool.Name, err)
+		params := map[string]any{}
+		if cursor != "" {
+			params["cursor"] = cursor
 		}
-		tools = append(tools, Tool{
-			Name: tool.Name, Description: tool.Description, InputSchema: canonical,
-			SchemaDigest: DigestBytes(canonical),
+		toolsResponse, _, err := call(ctx, client, endpoint, headers, sessionID, map[string]any{
+			"jsonrpc": "2.0", "id": page + 2, "method": "tools/list", "params": params,
 		})
+		if err != nil {
+			return nil, "", fmt.Errorf("list remote MCP tools: %w", err)
+		}
+		var result struct {
+			Tools      []discoveredTool `json:"tools"`
+			NextCursor string           `json:"nextCursor"`
+		}
+		if err := json.Unmarshal(toolsResponse.Result, &result); err != nil {
+			return nil, "", fmt.Errorf("decode tools/list result: %w", err)
+		}
+		for _, tool := range result.Tools {
+			if strings.TrimSpace(tool.Name) == "" || seen[tool.Name] {
+				return nil, "", errors.New("remote MCP returned an invalid or duplicate tool name")
+			}
+			if len(tools) >= 4096 {
+				return nil, "", errors.New("remote MCP tool inventory exceeded 4096 tools")
+			}
+			seen[tool.Name] = true
+			canonical, err := canonicalJSON(tool.InputSchema)
+			if err != nil {
+				return nil, "", fmt.Errorf("tool %q input schema: %w", tool.Name, err)
+			}
+			tools = append(tools, Tool{Name: tool.Name, Description: tool.Description, InputSchema: canonical, SchemaDigest: DigestBytes(canonical)})
+		}
+		if result.NextCursor == "" {
+			break
+		}
+		if cursors[result.NextCursor] {
+			return nil, "", errors.New("remote MCP repeated a pagination cursor")
+		}
+		cursors[result.NextCursor], cursor = true, result.NextCursor
 	}
 	sort.Slice(tools, func(i, j int) bool { return tools[i].Name < tools[j].Name })
 	digest, err := ToolSetDigest(tools)

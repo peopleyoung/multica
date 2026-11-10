@@ -26,6 +26,7 @@ import (
 	"github.com/multica-ai/multica/server/internal/logger"
 	"github.com/multica-ai/multica/server/internal/maintenance"
 	obsmetrics "github.com/multica-ai/multica/server/internal/metrics"
+	"github.com/multica-ai/multica/server/internal/modelcontrol"
 	"github.com/multica-ai/multica/server/internal/profiling"
 	"github.com/multica-ai/multica/server/internal/realtime"
 	"github.com/multica-ai/multica/server/internal/scheduler"
@@ -343,14 +344,7 @@ func main() {
 		slog.Warn("JWT_SECRET is not set — using insecure dev default (allowed only because APP_ENV is not production).")
 	}
 	if os.Getenv("RESEND_API_KEY") == "" && strings.TrimSpace(os.Getenv("SMTP_HOST")) == "" {
-		slog.Warn("no email backend configured (RESEND_API_KEY and SMTP_HOST both empty) — verification codes will be printed to the log instead of emailed.")
-	}
-	if os.Getenv("MULTICA_DEV_VERIFICATION_CODE") != "" {
-		if strings.EqualFold(strings.TrimSpace(os.Getenv("APP_ENV")), "production") {
-			slog.Warn("MULTICA_DEV_VERIFICATION_CODE is set but ignored because APP_ENV=production.")
-		} else {
-			slog.Warn("MULTICA_DEV_VERIFICATION_CODE is enabled. Use it only for local development or private test instances.")
-		}
+		slog.Warn("no email backend configured (RESEND_API_KEY and SMTP_HOST both empty) — invitation notifications will be printed to the log instead of emailed. Password sign-in does not require email.")
 	}
 
 	port := os.Getenv("PORT")
@@ -679,6 +673,21 @@ func main() {
 		os.Exit(1)
 	}
 
+	llmLimits, err := modelcontrol.ParseLimits(os.Getenv("MULTICA_LLM_LIMITS_JSON"))
+	if err != nil {
+		slog.Error("invalid MULTICA_LLM_LIMITS_JSON", "error", err)
+		os.Exit(1)
+	}
+	llmCapabilities, err := llm.ParseCapabilities(os.Getenv("MULTICA_LLM_CAPABILITIES_JSON"))
+	if err != nil {
+		slog.Error("invalid MULTICA_LLM_CAPABILITIES_JSON", "error", err)
+		os.Exit(1)
+	}
+	if err := (llm.Config{APIKey: os.Getenv("MULTICA_LLM_API_KEY"), BaseURL: os.Getenv("MULTICA_LLM_BASE_URL"), DefaultModel: os.Getenv("MULTICA_LLM_DEFAULT_MODEL"), Capabilities: llmCapabilities}).Validate(); err != nil {
+		slog.Error("invalid LLM configuration", "error", err)
+		os.Exit(1)
+	}
+
 	r, h := NewRouterWithOptions(pool, hub, bus, analyticsClient, storeRedis, RouterOptions{
 		HTTPMetrics:         httpMetrics,
 		BusinessMetrics:     businessMetrics,
@@ -693,6 +702,8 @@ func main() {
 		HeartbeatScheduler:  heartbeatScheduler,
 		LLMMaxRetries:       llmMaxRetries,
 		LLMDisableThinking:  llmDisableThinking,
+		LLMCapabilities:     llmCapabilities,
+		LLMLimits:           llmLimits,
 	})
 	var replicaQueries *db.Queries
 	if replicaPool != nil {

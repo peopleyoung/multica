@@ -143,6 +143,9 @@ func (h *Handler) resolveMikaAgent(w http.ResponseWriter, r *http.Request, works
 		writeError(w, http.StatusForbidden, "you cannot bind an agent to this runtime")
 		return db.Agent{}, false, false
 	}
+	if !h.validateNativeAgentModel(w, r, wsUUID, runtime.Provider, strings.TrimSpace(req.Model)) {
+		return db.Agent{}, false, false
+	}
 
 	tx, err := h.TxStarter.Begin(r.Context())
 	if err != nil {
@@ -174,6 +177,14 @@ func (h *Handler) resolveMikaAgent(w http.ResponseWriter, r *http.Request, works
 		return existing, false, true
 	} else if !errors.Is(err, pgx.ErrNoRows) {
 		writeError(w, http.StatusInternalServerError, "failed to look up the workspace agent")
+		return db.Agent{}, false, false
+	}
+
+	if _, err := qtx.LockWorkspaceForChatSessionCreate(r.Context(), wsUUID); err != nil {
+		writeError(w, 404, "workspace not found")
+		return db.Agent{}, false, false
+	}
+	if !h.validateNativeAgentModel(w, r, wsUUID, runtime.Provider, strings.TrimSpace(req.Model)) {
 		return db.Agent{}, false, false
 	}
 

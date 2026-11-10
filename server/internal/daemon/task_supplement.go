@@ -130,7 +130,7 @@ func taskSupplementFailureReason(ctx context.Context, err error) string {
 // turn, wakes immediately on a content-free WebSocket hint, and otherwise uses
 // the same five-second cadence as task cancellation polling.
 func (d *Daemon) runTaskSupplementLoop(ctx context.Context, session *agent.Session, taskID string, wakeup <-chan struct{}, taskLog *slog.Logger) {
-	if session == nil || session.Supplement == nil || session.SupplementReady == nil {
+	if session == nil || session.Supplement == nil && session.SupplementWithID == nil || session.SupplementReady == nil {
 		return
 	}
 	for {
@@ -163,7 +163,13 @@ func (d *Daemon) runTaskSupplementLoop(ctx context.Context, session *agent.Sessi
 		// The adapter owns transport deadlines. Hook-based providers wait for a
 		// safe boundary, which can follow a long-running tool; run cancellation
 		// still aborts that wait and prevents late delivery.
-		injectErr := session.Supplement(ctx, formatTaskSupplementInstruction(supplement.AuthorName, supplement.Content))
+		instruction := formatTaskSupplementInstruction(supplement.AuthorName, supplement.Content)
+		var injectErr error
+		if session.SupplementWithID != nil {
+			injectErr = session.SupplementWithID(ctx, supplement.CommentID, instruction)
+		} else {
+			injectErr = session.Supplement(ctx, instruction)
+		}
 		reason := taskSupplementFailureReason(ctx, injectErr)
 		if injectErr != nil {
 			// Raw provider/Go diagnostics remain local. Workspace-visible state is

@@ -78,13 +78,10 @@ func newSquadCommentTriggerFixture(t *testing.T) squadCommentTriggerFixture {
 	t.Helper()
 	ctx := context.Background()
 
-	// Reuse the seeded "Handler Test Agent" as the leader — it has a runtime.
-	var leaderID string
-	if err := testPool.QueryRow(ctx, `
-		SELECT id FROM agent WHERE workspace_id = $1 ORDER BY created_at ASC LIMIT 1
-	`, testWorkspaceID).Scan(&leaderID); err != nil {
-		t.Fatalf("load leader agent: %v", err)
-	}
+	// A suite-wide heartbeat can expire before these integration tests run.
+	leaderID := createHandlerTestAgent(t, "Squad Comment Leader", nil)
+	runtimeID := dbfx.Runtime(t, "squad comment runtime")
+	dbfx.Exec(t, "UPDATE agent SET runtime_id=$2 WHERE id=$1", leaderID, runtimeID)
 
 	// Spin up a second agent in the same workspace as a non-leader mention
 	// target. createHandlerTestAgent installs a t.Cleanup row deletion.

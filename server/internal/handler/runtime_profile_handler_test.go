@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
-	"strings"
 	"testing"
 
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
@@ -342,160 +341,25 @@ func TestRuntimeProfileDeleteLockSerializesRegistration(t *testing.T) {
 // private — so a "private" profile can't leak to other members or be
 // registered by other daemons. Belt-and-suspenders: also assert the row in
 // the DB is 'workspace'.
-func TestCreateRuntimeProfile_ForcesWorkspaceVisibility(t *testing.T) {
-	if testHandler == nil {
-		t.Skip("database not available")
-	}
-	ctx := context.Background()
-
-	w := httptest.NewRecorder()
-	req := newRequest("POST", "/api/workspaces/"+testWorkspaceID+"/runtime-profiles", map[string]any{
-		"display_name":    "Visibility Forced Profile",
-		"protocol_family": "codex",
-		"command_name":    "vis-forced-codex",
-		"visibility":      "private", // must be ignored
-	})
-	req = withURLParam(req, "id", testWorkspaceID)
-	testHandler.CreateRuntimeProfile(w, req)
-
-	if w.Code != http.StatusCreated {
-		t.Fatalf("expected 201, got %d: %s", w.Code, w.Body.String())
-	}
-	var resp RuntimeProfileResponse
-	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
-		t.Fatalf("decode response: %v", err)
-	}
-	t.Cleanup(func() {
-		testPool.Exec(context.Background(), `DELETE FROM runtime_profile WHERE id = $1`, resp.ID)
-	})
-
-	if resp.Visibility != "workspace" {
-		t.Fatalf("response visibility = %q, want workspace (private must be forced to workspace)", resp.Visibility)
-	}
-	var dbVis string
-	if err := testPool.QueryRow(ctx, `SELECT visibility FROM runtime_profile WHERE id = $1`, resp.ID).Scan(&dbVis); err != nil {
-		t.Fatalf("read stored visibility: %v", err)
-	}
-	if dbVis != "workspace" {
-		t.Fatalf("stored visibility = %q, want workspace", dbVis)
-	}
-}
-
-func TestCreateRuntimeProfile_ValidatesCommandAndFixedArgs(t *testing.T) {
-	if testHandler == nil {
-		t.Skip("database not available")
-	}
-	cases := []struct {
-		name        string
-		commandName string
-		fixedArgs   []string
-		wantStatus  int
-	}{
-		{
-			name:        "split command and args accepted",
-			commandName: "agent",
-			fixedArgs:   []string{"--model", "composer-2.5"},
-			wantStatus:  http.StatusCreated,
-		},
-		{
-			name:        "command line rejected",
-			commandName: "agent --model composer-2.5",
-			wantStatus:  http.StatusBadRequest,
-		},
-		{
-			name:        "nul arg rejected",
-			commandName: "agent",
-			fixedArgs:   []string{"bad\x00arg"},
-			wantStatus:  http.StatusBadRequest,
-		},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
+func TestRetiredRuntimeProfileWrites(t *testing.T) {
+	for _, method := range []string{http.MethodPost, http.MethodPatch} {
+		t.Run(method, func(t *testing.T) {
+			profileID := insertRuntimeProfileFixture(t, context.Background(), "Historical", "codex", "codex")
+			req := withURLParams(newRequest(method, "/", map[string]any{"display_name": "Changed", "command_name": "wrapper"}), "id", testWorkspaceID, "profileId", profileID)
 			w := httptest.NewRecorder()
-			req := newRequest("POST", "/api/workspaces/"+testWorkspaceID+"/runtime-profiles", map[string]any{
-				"display_name":    "Validation " + tc.name,
-				"protocol_family": "codex",
-				"command_name":    tc.commandName,
-				"fixed_args":      tc.fixedArgs,
-			})
-			req = withURLParam(req, "id", testWorkspaceID)
-			testHandler.CreateRuntimeProfile(w, req)
-			if w.Code != tc.wantStatus {
-				t.Fatalf("status = %d, want %d: %s", w.Code, tc.wantStatus, w.Body.String())
+			if method == http.MethodPost {
+				testHandler.CreateRuntimeProfile(w, req)
+			} else {
+				testHandler.UpdateRuntimeProfile(w, req)
 			}
-			if w.Code == http.StatusCreated {
-				var resp RuntimeProfileResponse
-				if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
-					t.Fatalf("decode response: %v", err)
-				}
-				t.Cleanup(func() {
-					testPool.Exec(context.Background(), `DELETE FROM runtime_profile WHERE id = $1`, resp.ID)
-				})
-				if got := strings.Join(resp.FixedArgs, " "); got != strings.Join(tc.fixedArgs, " ") {
-					t.Fatalf("fixed_args = %v, want %v", resp.FixedArgs, tc.fixedArgs)
-				}
+			if w.Code != http.StatusGone {
+				t.Fatalf("retired profile write: %d %s", w.Code, w.Body.String())
+			}
+			var name string
+			dbfx.QueryRow(t, "SELECT display_name FROM runtime_profile WHERE id=$1", profileID).Scan(&name)
+			if name != "Historical" {
+				t.Fatal("retired profile write changed history")
 			}
 		})
-	}
-}
-
-func TestCreateRuntimeProfile_RuntimeIdentity(t *testing.T) {
-	if testHandler == nil {
-		t.Skip("database not available")
-	}
-	for _, tc := range []struct {
-		name, target, family string
-		status               int
-	}{
-		{"omp", "omp", "", http.StatusCreated},
-		{"legacy pi", "", "pi", http.StatusCreated},
-		{"mismatch", "omp", "codex", http.StatusBadRequest},
-		{"unknown", "unknown", "", http.StatusBadRequest},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			req := withURLParam(newRequest("POST", "/", map[string]any{
-				"display_name": "Identity " + tc.name, "runtime_type": tc.target,
-				"protocol_family": tc.family, "command_name": "wrapper", "fixed_args": []string{"launch"},
-			}), "id", testWorkspaceID)
-			w := httptest.NewRecorder()
-			testHandler.CreateRuntimeProfile(w, req)
-			if w.Code != tc.status {
-				t.Fatalf("status %d: %s", w.Code, w.Body.String())
-			}
-			if tc.status != http.StatusCreated {
-				return
-			}
-			var resp RuntimeProfileResponse
-			if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
-				t.Fatal(err)
-			}
-			t.Cleanup(func() { testPool.Exec(context.Background(), `DELETE FROM runtime_profile WHERE id = $1`, resp.ID) })
-			want := tc.target
-			if want == "" {
-				want = tc.family
-			}
-			if resp.RuntimeType != want || resp.ProtocolFamily != "pi" || resp.CommandName != "wrapper" || len(resp.FixedArgs) != 1 {
-				t.Fatalf("incorrect identity: %+v", resp)
-			}
-		})
-	}
-}
-
-func TestUpdateRuntimeProfile_RejectsIdentityChange(t *testing.T) {
-	if testHandler == nil {
-		t.Skip("database not available")
-	}
-	id := insertRuntimeProfileFixture(t, context.Background(), "Immutable Pi", "pi", "wrapper")
-	for _, field := range []string{"runtime_type", "protocol_family"} {
-		// withURLParams, not two nested withURLParam calls: the singular helper
-		// installs a fresh chi route context each time, so the outer call would
-		// drop "id" and the handler would reject on workspace id before ever
-		// reaching the immutability check this test exists for.
-		req := withURLParams(newRequest("PATCH", "/", map[string]any{field: "omp"}), "id", testWorkspaceID, "profileId", id)
-		w := httptest.NewRecorder()
-		testHandler.UpdateRuntimeProfile(w, req)
-		if w.Code != http.StatusBadRequest || !strings.Contains(w.Body.String(), "immutable") {
-			t.Fatalf("identity update: %d %s", w.Code, w.Body.String())
-		}
 	}
 }

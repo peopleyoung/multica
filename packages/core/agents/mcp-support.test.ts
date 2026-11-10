@@ -1,9 +1,11 @@
+// @vitest-environment node
 import { describe, expect, it } from "vitest";
 
 import { providerSupportsMcpConfig } from "./mcp-support";
 
 describe("providerSupportsMcpConfig", () => {
   it("accepts a provider whose runtime consumes mcp_config", () => {
+    expect(providerSupportsMcpConfig("native")).toBe(true);
     expect(providerSupportsMcpConfig("claude")).toBe(true);
   });
   it("rejects providers whose runtime ignores mcp_config", () => {

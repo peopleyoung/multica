@@ -1,0 +1,1 @@
+DROP INDEX CONCURRENTLY IF EXISTS user_email_unique_idx;

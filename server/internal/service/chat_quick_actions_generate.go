@@ -14,6 +14,7 @@ import (
 
 	"github.com/multica-ai/multica/server/internal/util"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
+	"github.com/multica-ai/multica/server/pkg/llm"
 	"github.com/multica-ai/multica/server/pkg/protocol"
 )
 
@@ -181,8 +182,9 @@ const chatQuickActionsLanguageRule = `LANGUAGE RULE: Write every "label" and "pr
 // resolves the placeholder quietly. Reporting an automatic failure would pop a
 // "couldn't refresh" toast for an action the user never took.
 func (s *TaskService) GenerateChatQuickActionsForTask(ctx context.Context, task db.AgentTaskQueue, origin ChatQuickActionsOrigin) error {
-	if s.QuickActions == nil || !s.QuickActions.Enabled() {
-		return nil
+	client := s.quickActionsClient(ctx, task)
+	if client == nil || !client.Enabled() {
+		return s.SupplementChatQuickActions(ctx, task, "", origin == ChatQuickActionsRefresh)
 	}
 	if !task.ChatSessionID.Valid {
 		return nil
@@ -213,8 +215,13 @@ func (s *TaskService) GenerateChatQuickActionsForTask(ctx context.Context, task 
 		return err
 	}
 
-	raw, err := s.QuickActions.GenerateJSON(ctx,
-		"", // deployment default: MULTICA_LLM_DEFAULT_MODEL, else llm.FallbackModel
+	workspace, err := s.ResolveTaskWorkspaceIDChecked(ctx, task)
+	if err != nil {
+		return err
+	}
+	ctx = llm.WithCallScope(ctx, llm.CallScope{WorkspaceID: workspace, TaskID: util.UUIDToString(task.ID), SessionID: util.UUIDToString(task.ChatSessionID), Purpose: "quick_actions"})
+	raw, err := client.GenerateJSON(ctx,
+		"", // Use the resolved task model.
 		chatQuickActionsSystemPrompt,
 		prompt,
 		chatQuickActionsTemperature,
@@ -252,7 +259,7 @@ func (s *TaskService) GenerateChatQuickActionsForTask(ctx context.Context, task 
 // The goroutine owns its own context: the caller's is typically an HTTP request
 // context that is cancelled the moment the completion callback returns.
 func (s *TaskService) GenerateChatQuickActionsAsync(task db.AgentTaskQueue, origin ChatQuickActionsOrigin) {
-	if s.QuickActions == nil || !s.QuickActions.Enabled() {
+	if s.QuickActionsForTask == nil && (s.QuickActions == nil || !s.QuickActions.Enabled()) {
 		return
 	}
 	sessionKey := util.UUIDToString(task.ChatSessionID)
@@ -287,7 +294,7 @@ func (s *TaskService) GenerateChatQuickActionsAsync(task db.AgentTaskQueue, orig
 			if rec := recover(); rec != nil {
 				slog.Error("chat quick actions generation panicked",
 					"task_id", util.UUIDToString(task.ID),
-					"panic", rec,
+					"failure", "panic",
 				)
 			}
 		}()
@@ -299,7 +306,7 @@ func (s *TaskService) GenerateChatQuickActionsAsync(task db.AgentTaskQueue, orig
 			slog.Warn("chat quick actions generation failed",
 				"task_id", util.UUIDToString(task.ID),
 				"chat_session_id", sessionKey,
-				"error", err,
+				"failure", "generation_or_persistence_failed",
 			)
 		}
 	}()
@@ -494,4 +501,18 @@ func truncateChatQuickActionsRunes(content string, maxRunes int) string {
 		return content
 	}
 	return string(runes[:maxRunes]) + "…"
+}
+
+func (s *TaskService) quickActionsClient(ctx context.Context, task db.AgentTaskQueue) ChatQuickActionsLLM {
+	if s.QuickActions != nil {
+		return s.QuickActions
+	}
+	if s.QuickActionsForTask != nil {
+		client, err := s.QuickActionsForTask(ctx, task)
+		if err != nil {
+			return nil
+		}
+		return client
+	}
+	return s.QuickActions
 }

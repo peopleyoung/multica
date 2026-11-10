@@ -15,6 +15,7 @@
  */
 import { Modal, Pressable, ScrollView, View } from "react-native";
 import type { Agent } from "@multica/core/types";
+import { AgentRuntimeLabel } from "./agent-runtime-label";
 import { Text } from "@/components/ui/text";
 import { ActorAvatar } from "@/components/ui/actor-avatar";
 import { cn } from "@/lib/utils";
@@ -92,6 +93,7 @@ export function AgentPickerSheet({
                           >
                             {agent.name}
                           </Text>
+                          <AgentRuntimeLabel runtimeId={agent.runtime_id ?? null} />
                           {agent.description ? (
                             <Text
                               className="text-xs text-muted-foreground mt-0.5"

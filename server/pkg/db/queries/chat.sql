@@ -472,7 +472,13 @@ FOR UPDATE;
 -- so the daemon does not keep running work whose result has nowhere to
 -- land. workspace_id in the WHERE clause is a SQL-layer tenant guard; see
 -- DeleteIssue.
-DELETE FROM chat_session WHERE id = $1 AND workspace_id = $2;
+WITH target AS (
+    SELECT chat_session.id FROM chat_session WHERE chat_session.id = $1 AND chat_session.workspace_id = $2
+), cleared_native_sessions AS (
+    DELETE FROM native_session WHERE workspace_id = $2 AND scope_type = 'chat'
+      AND scope_id IN (SELECT id FROM target)
+)
+DELETE FROM chat_session WHERE chat_session.id IN (SELECT target.id FROM target);
 
 -- name: TouchChatSession :exec
 UPDATE chat_session SET updated_at = now()

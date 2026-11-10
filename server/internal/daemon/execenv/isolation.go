@@ -31,28 +31,6 @@ type preparationRequest struct {
 	Reuse   *ReuseParams   `json:"reuse,omitempty"`
 }
 
-// preparationOpenclawGatewayPin is the private helper-protocol view of an
-// OpenclawGatewayPin. Defining a new type intentionally drops MarshalJSON,
-// whose public/logging contract masks Token. The helper needs the real token
-// over its stdin pipe so it can materialize a working per-task wrapper.
-type preparationOpenclawGatewayPin OpenclawGatewayPin
-
-type preparationPrepareParams struct {
-	*PrepareParams
-	OpenclawGateway preparationOpenclawGatewayPin `json:"OpenclawGateway"`
-}
-
-type preparationReuseParams struct {
-	*ReuseParams
-	OpenclawGateway preparationOpenclawGatewayPin `json:"OpenclawGateway"`
-}
-
-type preparationRequestPayload struct {
-	Action  string                    `json:"action"`
-	Prepare *preparationPrepareParams `json:"prepare,omitempty"`
-	Reuse   *preparationReuseParams   `json:"reuse,omitempty"`
-}
-
 type preparationResponse struct {
 	Environment *Environment `json:"environment,omitempty"`
 	Error       string       `json:"error,omitempty"`
@@ -83,24 +61,8 @@ func (e *preparationKindError) Unwrap() error { return e.kind }
 
 // preparationErrorKind names the class of err for the wire, or "" when it has
 // none.
-func preparationErrorKind(err error) string {
-	if errors.Is(err, ErrOpenclawCLITimeout) {
-		return preparationErrorKindOpenclawCLITimeout
-	}
-	return ""
-}
-
-// rehydratePreparationError rebuilds a typed error from the wire pair. An
-// unknown kind (helper newer than the daemon) degrades to a plain error with
-// the original message rather than being dropped.
-func rehydratePreparationError(message, kind string) error {
-	switch kind {
-	case preparationErrorKindOpenclawCLITimeout:
-		return &preparationKindError{msg: message, kind: ErrOpenclawCLITimeout}
-	default:
-		return errors.New(message)
-	}
-}
+func preparationErrorKind(err error) string                { return "" }
+func rehydratePreparationError(message, kind string) error { return errors.New(message) }
 
 // PrepareIsolated executes Prepare in a killable helper process. command must
 // name the current multica binary followed by PreparationHelperArg in
@@ -220,39 +182,9 @@ func runPreparationProcess(ctx context.Context, command []string, request prepar
 // this trusted local process boundary; ordinary json.Marshal calls on the
 // public type remain redacted.
 func marshalPreparationRequest(request preparationRequest) ([]byte, error) {
-	payload := preparationRequestPayload{Action: request.Action}
-	if request.Prepare != nil {
-		payload.Prepare = &preparationPrepareParams{
-			PrepareParams:   request.Prepare,
-			OpenclawGateway: preparationOpenclawGatewayPin(request.Prepare.OpenclawGateway),
-		}
-	}
-	if request.Reuse != nil {
-		payload.Reuse = &preparationReuseParams{
-			ReuseParams:     request.Reuse,
-			OpenclawGateway: preparationOpenclawGatewayPin(request.Reuse.OpenclawGateway),
-		}
-	}
-	return json.Marshal(payload)
+	return json.Marshal(request)
 }
 
-// decodePreparationRequest reads the parent's payload. Unknown fields are
-// IGNORED, not rejected: parent and helper are the same program but not
-// necessarily the same build. The parent is the daemon process that is
-// running; the helper is whatever binary sits at that executable path when the
-// task starts, and every upgrade path replaces the file under a live daemon —
-// Desktop swaps the bundled/managed CLI and defers the restart while the daemon
-// is busy, `brew upgrade` and a manual replacement are picked up by
-// trySelfReload only on its next idle tick. Until the daemon re-execs, an
-// older parent talks to a newer helper.
-//
-// DisallowUnknownFields turned that ordinary window into a hard failure of
-// every task on the host: removing TaskContextForEnv.HandoffNote (#7626) left
-// old daemons still sending an untagged, non-omitempty `"HandoffNote": ""`,
-// and the new helper answered `json: unknown field "HandoffNote"` (MUL-7029).
-// Field drift in a struct nobody versions is expected here, so the request is
-// decoded on the same best-effort terms as the response the parent reads back:
-// a param the other side does not know about is dropped, not fatal.
 func decodePreparationRequest(in io.Reader) (preparationRequest, error) {
 	var request preparationRequest
 	if err := json.NewDecoder(in).Decode(&request); err != nil {

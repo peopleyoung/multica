@@ -285,7 +285,7 @@ func TestInitiateListModels_ForceSkipsCatalogCache(t *testing.T) {
 		t.Skip("database not available")
 	}
 
-	runtimeID := dbfx.Runtime(t, "Force model refresh runtime")
+	runtimeID := dbfx.Runtime(t, "Force model refresh runtime", testutil.Cols{"provider": "claude"})
 	cache := NewInMemoryModelCatalogCache()
 	unavailable := []UnavailableModelEntry{{
 		ID:     "cc-update-required-1",

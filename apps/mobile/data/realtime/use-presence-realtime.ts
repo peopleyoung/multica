@@ -18,6 +18,7 @@
  *
  * Reconnect: re-invalidate runtimes + agents + snapshot after missed events.
  */
+import { nativeModelKeys } from "@/data/queries/native-model";
 import { useQueryClient } from "@tanstack/react-query";
 import { useWSSubscriptions } from "@/lib/use-ws-subscriptions";
 
@@ -40,6 +41,7 @@ export function usePresenceRealtime() {
       return [
         // Daemon lifecycle; heartbeats deliberately omitted.
         ws.on("daemon:register", () => {
+          queryClient.invalidateQueries({ queryKey: nativeModelKeys.all(wsId) });
           invalidateRuntimes();
           invalidateAgents();
         }),
@@ -61,6 +63,7 @@ export function usePresenceRealtime() {
 
         // Recover all presence inputs after missed sweeper transitions.
         ws.onReconnect(() => {
+          queryClient.invalidateQueries({ queryKey: nativeModelKeys.all(wsId) });
           invalidateRuntimes();
           invalidateAgents();
           invalidateSnapshot();

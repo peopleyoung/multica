@@ -25,6 +25,15 @@ export function isRuntimeUsableForUser(
   // An ownerless runtime is unusable by anyone, public included: the server
   // needs an owner to mint the agent's task token, so a bind here would only
   // yield agents whose tasks get cancelled at claim time (MUL-3292).
+  if (runtime.provider !== "native" || runtime.profile_id) return false;
+  return canReadRuntimeData(runtime, currentUserId);
+}
+
+/** Access to retained runtime data does not depend on execution support. */
+export function canReadRuntimeData(
+  runtime: RuntimeDevice,
+  currentUserId: string | null,
+): boolean {
   if (!runtime.owner_id) return false;
   if (!currentUserId) return true;
   if (runtime.owner_id === currentUserId) return true;

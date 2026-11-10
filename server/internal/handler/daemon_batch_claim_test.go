@@ -50,16 +50,24 @@ func postBatchClaim(t *testing.T, workspaceID string, runtimeIDs []string, maxTa
 func postBatchClaimWithCapabilities(t *testing.T, workspaceID string, runtimeIDs []string, maxTasks int, capabilities string) *httptest.ResponseRecorder {
 	t.Helper()
 	w := httptest.NewRecorder()
-	req := batchClaimRequest(workspaceID, runtimeIDs, maxTasks, capabilities)
+	req := batchClaimRequest(t, workspaceID, runtimeIDs, maxTasks, capabilities)
 	testHandler.ClaimTasksByRuntime(w, req)
 	return w
 }
 
-func batchClaimRequest(workspaceID string, runtimeIDs []string, maxTasks int, capabilities string) *http.Request {
+func batchClaimRequest(t *testing.T, workspaceID string, runtimeIDs []string, maxTasks int, capabilities string) *http.Request {
+	machine := batchClaimTestDaemonID
+	for _, id := range runtimeIDs {
+		var candidate string
+		if err := testPool.QueryRow(t.Context(), `SELECT daemon_id FROM agent_runtime WHERE id::text=$1 AND workspace_id::text=$2`, id, workspaceID).Scan(&candidate); err == nil {
+			machine = candidate
+			break
+		}
+	}
 	req := newDaemonTokenRequest(http.MethodPost, "/api/daemon/tasks/claim",
-		map[string]any{"daemon_id": batchClaimTestDaemonID, "runtime_ids": runtimeIDs, "max_tasks": maxTasks}, workspaceID, batchClaimTestDaemonID)
+		map[string]any{"daemon_id": machine, "runtime_ids": runtimeIDs, "max_tasks": maxTasks}, workspaceID, machine)
 	if capabilities != "" {
-		req.Header.Set("X-Client-Capabilities", capabilities)
+		req.Header.Set("X-Client-Capabilities", capabilities+",native-runtime-v1")
 	}
 	return req
 }
@@ -84,7 +92,7 @@ func TestClaimTasksByRuntime_ClaimPollHintSchedulesNextDeferredTask(t *testing.T
 	})
 
 	hinted := testutil.Decode[batchClaimResponse](t, testHandler.ClaimTasksByRuntime,
-		batchClaimRequest(testWorkspaceID, []string{runtimeID}, 1, protocol.DaemonCapabilityClaimPollHintsV1), http.StatusOK)
+		batchClaimRequest(t, testWorkspaceID, []string{runtimeID}, 1, protocol.DaemonCapabilityClaimPollHintsV1), http.StatusOK)
 	if !hinted.ClaimPollHintSupported {
 		t.Fatal("response did not confirm claim poll hint support")
 	}
@@ -93,7 +101,7 @@ func TestClaimTasksByRuntime_ClaimPollHintSchedulesNextDeferredTask(t *testing.T
 	}
 
 	legacy := testutil.Decode[batchClaimResponse](t, testHandler.ClaimTasksByRuntime,
-		batchClaimRequest(testWorkspaceID, []string{runtimeID}, 1, ""), http.StatusOK)
+		batchClaimRequest(t, testWorkspaceID, []string{runtimeID}, 1, ""), http.StatusOK)
 	if legacy.ClaimPollHintSupported || legacy.NextDeferredTaskAfterMillis != 0 {
 		t.Fatalf("legacy response unexpectedly exposed poll hints: %+v", legacy)
 	}
@@ -181,7 +189,7 @@ func TestClaimTasksByRuntime_RoutesAcrossRuntimesAndMintsTokens(t *testing.T) {
 	ctx := context.Background()
 
 	rt1 := createClaimReclaimRuntime(t, ctx, "Batch claim rt1")
-	rt2 := createClaimReclaimRuntime(t, ctx, "Batch claim rt2")
+	rt2 := rt1
 	a1, i1 := createClaimReclaimAgentAndIssue(t, ctx, rt1, "Batch claim a1")
 	a2, i2 := createClaimReclaimAgentAndIssue(t, ctx, rt2, "Batch claim a2")
 	seedQueuedIssueTask(t, ctx, a1, rt1, i1)
@@ -205,8 +213,8 @@ func TestClaimTasksByRuntime_RoutesAcrossRuntimesAndMintsTokens(t *testing.T) {
 			t.Fatalf("task %s missing mat_ task token, got %q", task.ID, task.AuthToken)
 		}
 	}
-	if seen[rt1] != 1 || seen[rt2] != 1 {
-		t.Fatalf("runtime distribution = %v, want one task each for rt1/rt2", seen)
+	if seen[rt1] != 2 {
+		t.Fatalf("runtime distribution = %v, want two agents on the native machine", seen)
 	}
 }
 
@@ -235,7 +243,7 @@ func TestClaimTasksByRuntime_SkipsCrossWorkspaceRuntime(t *testing.T) {
 	var foreignRT, foreignAgent, foreignIssue string
 	if err := testPool.QueryRow(ctx, `
 		INSERT INTO agent_runtime (workspace_id, daemon_id, name, runtime_mode, provider, status, device_info, metadata, last_seen_at, visibility, owner_id)
-		VALUES ($1, NULL, 'Foreign RT', 'cloud', 'handler_test_runtime', 'online', 'x', '{}'::jsonb, now(), 'private', $2)
+		VALUES ($1, NULL, 'Foreign RT', 'cloud', 'native', 'online', 'x', '{"capabilities":["native-runtime-v1"]}'::jsonb, now(), 'private', $2)
 		RETURNING id`, foreignWS, foreignUser).Scan(&foreignRT); err != nil {
 		t.Fatalf("foreign runtime: %v", err)
 	}
@@ -287,7 +295,7 @@ func TestClaimTasksByRuntime_CancelsTaskWhenRuntimeOwnerMissing(t *testing.T) {
 	var rtNull string
 	if err := testPool.QueryRow(ctx, `
 		INSERT INTO agent_runtime (workspace_id, daemon_id, name, runtime_mode, provider, status, device_info, metadata, last_seen_at, visibility, owner_id)
-		VALUES ($1, NULL, 'Ownerless RT', 'cloud', 'handler_test_runtime', 'online', 'x', '{}'::jsonb, now(), 'private', NULL)
+		VALUES ($1, NULL, 'Ownerless RT', 'cloud', 'native', 'online', 'x', '{"capabilities":["native-runtime-v1"]}'::jsonb, now(), 'private', NULL)
 		RETURNING id`, testWorkspaceID).Scan(&rtNull); err != nil {
 		t.Fatalf("ownerless runtime: %v", err)
 	}

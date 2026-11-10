@@ -109,6 +109,11 @@ func (q *Queries) DeleteWorkspaceAdministration(ctx context.Context, workspaceID
 }
 
 const deleteWorkspaceAgents = `-- name: DeleteWorkspaceAgents :exec
+WITH cleared_native_sessions AS (
+    DELETE FROM native_session WHERE workspace_id = $1
+), cleared_model_calls AS (
+    DELETE FROM model_call WHERE workspace_id = $1
+)
 DELETE FROM agent WHERE agent.workspace_id = $1
 `
 

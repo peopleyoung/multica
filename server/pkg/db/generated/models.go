@@ -178,6 +178,7 @@ type AgentTaskQueue struct {
 	CancelledByID             pgtype.UUID `json:"cancelled_by_id"`
 	CancelledByName           pgtype.Text `json:"cancelled_by_name"`
 	IssueSnapshot             []byte      `json:"issue_snapshot"`
+	NativeModelConfig         []byte      `json:"-"`
 }
 
 type AgentToLabel struct {
@@ -1188,6 +1189,48 @@ type Member struct {
 	CreatedAt   pgtype.Timestamptz `json:"created_at"`
 }
 
+type ModelCall struct {
+	ID             pgtype.UUID        `json:"id"`
+	WorkspaceID    pgtype.UUID        `json:"workspace_id"`
+	TaskID         pgtype.UUID        `json:"task_id"`
+	SessionID      pgtype.UUID        `json:"session_id"`
+	Purpose        string             `json:"purpose"`
+	ScopeKey       string             `json:"scope_key"`
+	Model          string             `json:"model"`
+	RetryAttempt   int32              `json:"retry_attempt"`
+	AcquiredAt     pgtype.Timestamptz `json:"acquired_at"`
+	LeaseUntil     pgtype.Timestamptz `json:"lease_until"`
+	FinishedAt     pgtype.Timestamptz `json:"finished_at"`
+	Outcome        string             `json:"outcome"`
+	ReservedTokens int64              `json:"reserved_tokens"`
+	ChargedTokens  int64              `json:"charged_tokens"`
+	InputTokens    pgtype.Int8        `json:"input_tokens"`
+	OutputTokens   pgtype.Int8        `json:"output_tokens"`
+	CachedTokens   pgtype.Int8        `json:"cached_tokens"`
+	DurationMs     pgtype.Int8        `json:"duration_ms"`
+	HttpStatus     pgtype.Int4        `json:"http_status"`
+}
+
+type NativeSession struct {
+	ID               pgtype.UUID        `json:"id"`
+	WorkspaceID      pgtype.UUID        `json:"workspace_id"`
+	AgentID          pgtype.UUID        `json:"agent_id"`
+	ScopeType        string             `json:"scope_type"`
+	ScopeID          pgtype.UUID        `json:"scope_id"`
+	DaemonID         string             `json:"daemon_id"`
+	WorkDir          string             `json:"work_dir"`
+	Checkpoint       []byte             `json:"checkpoint"`
+	Version          int64              `json:"version"`
+	ActiveTaskID     pgtype.UUID        `json:"active_task_id"`
+	ActiveDispatch   pgtype.Timestamptz `json:"active_dispatch"`
+	LeaseToken       pgtype.UUID        `json:"lease_token"`
+	LeaseUntil       pgtype.Timestamptz `json:"lease_until"`
+	CreatedAt        pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt        pgtype.Timestamptz `json:"updated_at"`
+	GenerationTaskID pgtype.UUID        `json:"generation_task_id"`
+	WriteOutcomes    []byte             `json:"write_outcomes"`
+}
+
 type NotificationPreference struct {
 	ID          pgtype.UUID        `json:"id"`
 	WorkspaceID pgtype.UUID        `json:"workspace_id"`
@@ -1503,6 +1546,7 @@ type TaskMessage struct {
 	CreatedAt       pgtype.Timestamptz `json:"created_at"`
 	OutputTruncated pgtype.Bool        `json:"output_truncated"`
 	CallID          pgtype.Text        `json:"call_id"`
+	DedupKey        pgtype.Text        `json:"dedup_key"`
 }
 
 type TaskSupplement struct {
@@ -1613,7 +1657,10 @@ type User struct {
 	Language                pgtype.Text        `json:"language"`
 	ProfileDescription      string             `json:"profile_description"`
 	// User-preferred IANA timezone for report rendering (Viewing tz). NULL means "use the browser-detected tz at render time". Affects dashboards, charts, and any "today" label shown to this user. Does not affect data materialisation — all rollups remain in UTC.
-	Timezone pgtype.Text `json:"timezone"`
+	Timezone      pgtype.Text `json:"timezone"`
+	Username      pgtype.Text `json:"username"`
+	PasswordHash  string      `json:"-"`
+	EmailVerified bool        `json:"email_verified"`
 }
 
 type UserComposioConnection struct {
@@ -1734,7 +1781,9 @@ type Workspace struct {
 	IssueCounter int32              `json:"issue_counter"`
 	AvatarUrl    pgtype.Text        `json:"avatar_url"`
 	// When TRUE, an agent run that resolves to no precise accountable human (would be owner_fallback) is refused at enqueue instead of degrading to the agent owner (MUL-4302 §3.5). Default FALSE = owner_fallback. Never affects authorization (originator_user_id).
-	AttributionFailClosed bool `json:"attribution_fail_closed"`
+	AttributionFailClosed  bool   `json:"attribution_fail_closed"`
+	NativeMigrationState   string `json:"native_migration_state"`
+	NativeMigrationReceipt []byte `json:"native_migration_receipt"`
 }
 
 type WorkspaceInvitation struct {
@@ -1758,6 +1807,20 @@ type WorkspaceMcpServer struct {
 	CreatedBy   pgtype.UUID        `json:"created_by"`
 	CreatedAt   pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt   pgtype.Timestamptz `json:"updated_at"`
+}
+
+type WorkspaceModel struct {
+	ID              pgtype.UUID        `json:"id"`
+	WorkspaceID     pgtype.UUID        `json:"workspace_id"`
+	Name            string             `json:"name"`
+	BaseUrl         string             `json:"base_url"`
+	UpstreamModel   string             `json:"upstream_model"`
+	ApiKeyEncrypted []byte             `json:"-"`
+	Capabilities    []byte             `json:"capabilities"`
+	IsDefault       bool               `json:"is_default"`
+	Enabled         bool               `json:"enabled"`
+	CreatedAt       pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt       pgtype.Timestamptz `json:"updated_at"`
 }
 
 type WorkspaceShareLink struct {

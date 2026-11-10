@@ -4,14 +4,11 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
-	"os"
-	"path/filepath"
+
 	"strings"
 	"testing"
 
 	"github.com/spf13/cobra"
-
-	"github.com/multica-ai/multica/server/internal/cli"
 )
 
 // addCommonProfileFlags wires the persistent-style flags the run functions
@@ -105,127 +102,6 @@ func TestRunRuntimeProfileList(t *testing.T) {
 	}
 }
 
-func TestRunRuntimeProfileCreate(t *testing.T) {
-	redirectTestHome(t, t.TempDir())
-	t.Setenv("MULTICA_TOKEN", "test-token")
-	t.Setenv("MULTICA_WORKSPACE_ID", "ws-123")
-
-	var gotMethod, gotPath string
-	var gotBody map[string]any
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		gotMethod = r.Method
-		gotPath = r.URL.Path
-		_ = json.NewDecoder(r.Body).Decode(&gotBody)
-		w.WriteHeader(http.StatusCreated)
-		_ = json.NewEncoder(w).Encode(map[string]any{"id": "prof-1", "display_name": "Company Codex"})
-	}))
-	defer srv.Close()
-	t.Setenv("MULTICA_SERVER_URL", srv.URL)
-
-	cmd := newProfileCreateTestCmd()
-	_ = cmd.Flags().Set("protocol-family", "codex")
-	_ = cmd.Flags().Set("command-name", "company-codex")
-	_ = cmd.Flags().Set("display-name", "Company Codex")
-
-	if err := runRuntimeProfileCreate(cmd, nil); err != nil {
-		t.Fatalf("runRuntimeProfileCreate: %v", err)
-	}
-	if gotMethod != http.MethodPost {
-		t.Errorf("method = %s, want POST", gotMethod)
-	}
-	if gotPath != "/api/workspaces/ws-123/runtime-profiles" {
-		t.Errorf("path = %q, want /api/workspaces/ws-123/runtime-profiles", gotPath)
-	}
-	if gotBody["protocol_family"] != "codex" || gotBody["command_name"] != "company-codex" || gotBody["display_name"] != "Company Codex" {
-		t.Errorf("unexpected body: %#v", gotBody)
-	}
-	// fixed_args is intentionally NOT exposed by the CLI create path yet; the
-	// UI owns command-line parsing until this CLI grows an argv-aware parser.
-	if _, present := gotBody["fixed_args"]; present {
-		t.Errorf("fixed_args must not be sent by the CLI, got %#v", gotBody["fixed_args"])
-	}
-	// visibility is intentionally NOT exposed by the CLI in v1 (server forces
-	// 'workspace'), so it must never be sent.
-	if _, present := gotBody["visibility"]; present {
-		t.Errorf("visibility must not be sent by the CLI, got %#v", gotBody["visibility"])
-	}
-}
-
-func TestRunRuntimeProfileCreateRejectsBadFamily(t *testing.T) {
-	cmd := newProfileCreateTestCmd()
-	_ = cmd.Flags().Set("protocol-family", "not-a-real-backend")
-	_ = cmd.Flags().Set("command-name", "x")
-	_ = cmd.Flags().Set("display-name", "X")
-	// No server should ever be contacted; this must fail client-side.
-	if err := runRuntimeProfileCreate(cmd, nil); err == nil {
-		t.Fatal("expected invalid --protocol-family error")
-	}
-}
-
-func TestRunRuntimeProfileCreateRequiresFlags(t *testing.T) {
-	cmd := newProfileCreateTestCmd()
-	if err := runRuntimeProfileCreate(cmd, nil); err == nil {
-		t.Fatal("expected missing --protocol-family error")
-	}
-}
-
-func TestRunRuntimeProfileUpdateOnlySendsChangedFlags(t *testing.T) {
-	redirectTestHome(t, t.TempDir())
-	t.Setenv("MULTICA_TOKEN", "test-token")
-	t.Setenv("MULTICA_WORKSPACE_ID", "ws-123")
-
-	var gotMethod, gotPath string
-	var gotBody map[string]any
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		gotMethod = r.Method
-		gotPath = r.URL.Path
-		_ = json.NewDecoder(r.Body).Decode(&gotBody)
-		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(map[string]any{"id": "prof-1"})
-	}))
-	defer srv.Close()
-	t.Setenv("MULTICA_SERVER_URL", srv.URL)
-
-	cmd := newProfileUpdateTestCmd()
-	_ = cmd.Flags().Set("command-name", "new-codex")
-	_ = cmd.Flags().Set("enabled", "false")
-
-	if err := runRuntimeProfileUpdate(cmd, []string{"prof-1"}); err != nil {
-		t.Fatalf("runRuntimeProfileUpdate: %v", err)
-	}
-	if gotMethod != http.MethodPatch {
-		t.Errorf("method = %s, want PATCH", gotMethod)
-	}
-	if gotPath != "/api/workspaces/ws-123/runtime-profiles/prof-1" {
-		t.Errorf("path = %q, want .../runtime-profiles/prof-1", gotPath)
-	}
-	// Only the two changed flags must be present.
-	if gotBody["command_name"] != "new-codex" {
-		t.Errorf("command_name = %v, want new-codex", gotBody["command_name"])
-	}
-	if gotBody["enabled"] != false {
-		t.Errorf("enabled = %v, want false", gotBody["enabled"])
-	}
-	if _, ok := gotBody["display_name"]; ok {
-		t.Errorf("display_name should not be sent when unchanged: %#v", gotBody)
-	}
-	if _, ok := gotBody["visibility"]; ok {
-		t.Errorf("visibility should not be sent when unchanged: %#v", gotBody)
-	}
-}
-
-func TestRunRuntimeProfileUpdateNoFieldsErrors(t *testing.T) {
-	redirectTestHome(t, t.TempDir())
-	t.Setenv("MULTICA_TOKEN", "test-token")
-	t.Setenv("MULTICA_WORKSPACE_ID", "ws-123")
-	t.Setenv("MULTICA_SERVER_URL", "http://127.0.0.1:0")
-
-	cmd := newProfileUpdateTestCmd()
-	if err := runRuntimeProfileUpdate(cmd, []string{"prof-1"}); err == nil {
-		t.Fatal("expected 'no fields to update' error")
-	}
-}
-
 func TestRunRuntimeProfileDeleteSuccess(t *testing.T) {
 	redirectTestHome(t, t.TempDir())
 	t.Setenv("MULTICA_TOKEN", "test-token")
@@ -274,131 +150,12 @@ func TestRunRuntimeProfileDeleteConflictSurfacesServerMessage(t *testing.T) {
 	}
 }
 
-func TestRunRuntimeProfileSetAndUnsetPath(t *testing.T) {
-	redirectTestHome(t, t.TempDir())
-
-	// set-path
-	setCmd := newProfileSetPathTestCmd()
-	_ = setCmd.Flags().Set("path", "/opt/bin/company-codex")
-	if err := runRuntimeProfileSetPath(setCmd, []string{"prof-1"}); err != nil {
-		t.Fatalf("runRuntimeProfileSetPath: %v", err)
-	}
-
-	cfg, err := cli.LoadCLIConfig()
-	if err != nil {
-		t.Fatalf("LoadCLIConfig: %v", err)
-	}
-	if got := cfg.ProfileCommandOverrides["prof-1"]; got != "/opt/bin/company-codex" {
-		t.Fatalf("override after set = %q, want /opt/bin/company-codex", got)
-	}
-
-	// unset-path
-	unsetCmd := newProfileUnsetPathTestCmd()
-	if err := runRuntimeProfileUnsetPath(unsetCmd, []string{"prof-1"}); err != nil {
-		t.Fatalf("runRuntimeProfileUnsetPath: %v", err)
-	}
-	cfg, err = cli.LoadCLIConfig()
-	if err != nil {
-		t.Fatalf("LoadCLIConfig after unset: %v", err)
-	}
-	if _, ok := cfg.ProfileCommandOverrides["prof-1"]; ok {
-		t.Fatalf("override should be removed after unset, got %#v", cfg.ProfileCommandOverrides)
-	}
-}
-
-func TestRunRuntimeProfileSetPathRejectsRelative(t *testing.T) {
-	redirectTestHome(t, t.TempDir())
-	cmd := newProfileSetPathTestCmd()
-	_ = cmd.Flags().Set("path", "relative/path")
-	if err := runRuntimeProfileSetPath(cmd, []string{"prof-1"}); err == nil {
-		t.Fatal("expected absolute-path error")
-	}
-}
-
-func TestRunRuntimeProfileSetPathPreservesExistingConfig(t *testing.T) {
-	home := t.TempDir()
-	redirectTestHome(t, home)
-
-	// Seed an existing config with unrelated fields.
-	seed := cli.CLIConfig{ServerURL: "https://api.multica.ai", WorkspaceID: "ws-123", Token: "mul_xyz"}
-	if err := cli.SaveCLIConfig(seed); err != nil {
-		t.Fatal(err)
-	}
-
-	cmd := newProfileSetPathTestCmd()
-	_ = cmd.Flags().Set("path", "/opt/bin/company-codex")
-	if err := runRuntimeProfileSetPath(cmd, []string{"prof-1"}); err != nil {
-		t.Fatalf("runRuntimeProfileSetPath: %v", err)
-	}
-
-	cfg, err := cli.LoadCLIConfig()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if cfg.ServerURL != "https://api.multica.ai" || cfg.WorkspaceID != "ws-123" || cfg.Token != "mul_xyz" {
-		t.Errorf("set-path clobbered existing config: %#v", cfg)
-	}
-	if cfg.ProfileCommandOverrides["prof-1"] != "/opt/bin/company-codex" {
-		t.Errorf("override not written: %#v", cfg.ProfileCommandOverrides)
-	}
-}
-
-func TestRuntimeProfilePathMutationFailsClosedInTaskContext(t *testing.T) {
-	ownerHome := t.TempDir()
-	redirectTestHome(t, ownerHome)
-	t.Setenv("MULTICA_AGENT_ID", "agent-test")
-	t.Setenv("MULTICA_TASK_ID", "task-test")
-	t.Setenv("MULTICA_TASK_CONFIG_ROOT", filepath.Join(t.TempDir(), "task-multica"))
-
-	ownerPath := filepath.Join(ownerHome, ".multica", "config.json")
-	if err := os.MkdirAll(filepath.Dir(ownerPath), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	ownerBytes := []byte("{\n  \"profile_command_overrides\": {\"owner-prof\": \"/owner/bin\"},\n  \"token\": \"mul_owner_sentinel\"\n}\n")
-	if err := os.WriteFile(ownerPath, ownerBytes, 0o600); err != nil {
-		t.Fatal(err)
-	}
-
-	setCmd := newProfileSetPathTestCmd()
-	_ = setCmd.Flags().Set("path", "/task/bin")
-	if err := runRuntimeProfileSetPath(setCmd, []string{"prof-1"}); err == nil || !strings.Contains(err.Error(), "not available inside a daemon-managed task") {
-		t.Fatalf("set-path error = %v, want task-context guard", err)
-	}
-	if err := runRuntimeProfileUnsetPath(newProfileUnsetPathTestCmd(), []string{"owner-prof"}); err == nil || !strings.Contains(err.Error(), "not available inside a daemon-managed task") {
-		t.Fatalf("unset-path error = %v, want task-context guard", err)
-	}
-	after, err := os.ReadFile(ownerPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if string(after) != string(ownerBytes) {
-		t.Fatalf("owner config content changed: got %q", after)
-	}
-}
-
-func TestRunRuntimeProfileCreateOmpTarget(t *testing.T) {
-	redirectTestHome(t, t.TempDir())
-	t.Setenv("MULTICA_TOKEN", "test-token")
-	t.Setenv("MULTICA_WORKSPACE_ID", "ws-123")
-	var body map[string]any
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		_ = json.NewDecoder(r.Body).Decode(&body)
-		w.WriteHeader(http.StatusCreated)
-		_ = json.NewEncoder(w).Encode(map[string]any{"id": "prof-1"})
-	}))
-	defer srv.Close()
-	t.Setenv("MULTICA_SERVER_URL", srv.URL)
-	cmd := newProfileCreateTestCmd()
-	_ = cmd.Flags().Set("runtime-type", "omp")
-	_ = cmd.Flags().Set("command-name", "wrapper")
-	_ = cmd.Flags().Set("display-name", "Custom OMP")
-	if err := runRuntimeProfileCreate(cmd, nil); err != nil {
-		t.Fatal(err)
-	}
-	if body["runtime_type"] != "omp" || body["command_name"] != "wrapper" {
-		t.Fatalf("incorrect target: %+v", body)
-	}
-	if _, ok := body["protocol_family"]; ok {
-		t.Fatal("server must derive the protocol family")
-	}
+func TestRetiredRuntimeProfileWritesFailLocally(t *testing.T) {
+ for _, handler := range []func(*cobra.Command, []string) error{
+  runRuntimeProfileCreate, runRuntimeProfileUpdate, runRuntimeProfileSetPath, runRuntimeProfileUnsetPath,
+ } {
+  if err := handler(&cobra.Command{}, nil); err == nil || !strings.Contains(err.Error(), "retired") {
+   t.Fatalf("retired profile write = %v", err)
+  }
+ }
 }

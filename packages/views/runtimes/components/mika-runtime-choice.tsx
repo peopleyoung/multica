@@ -1,6 +1,7 @@
 "use client";
 
 import type { AgentRuntime } from "@multica/core/types";
+import type { RuntimeModelScope } from "@multica/core/runtimes";
 import { ModelDropdown } from "../../agents/components/model-dropdown";
 import { RuntimePicker } from "../../agents/components/runtime-picker";
 import { CompactRuntimeRow } from "./compact-runtime-row";
@@ -33,6 +34,7 @@ export function MikaRuntimeChoice({
   onChange,
   disabled = false,
   layout = "dropdown",
+  workspace,
 }: {
   runtimes: AgentRuntime[];
   runtimesLoading?: boolean;
@@ -42,6 +44,7 @@ export function MikaRuntimeChoice({
   onChange: (next: MikaRuntimeSelection) => void;
   disabled?: boolean;
   layout?: "dropdown" | "list";
+  workspace?: RuntimeModelScope;
 }) {
   const selected = runtimes.find((rt) => rt.id === value.runtimeId) ?? null;
 
@@ -82,7 +85,9 @@ export function MikaRuntimeChoice({
         />
       )}
       <ModelDropdown
+        workspace={workspace}
         runtimeId={value.runtimeId || null}
+        runtimeProvider={selected?.provider}
         runtimeOnline={selected?.status === "online"}
         value={value.model}
         onChange={(model) => onChange({ ...value, model })}

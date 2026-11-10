@@ -1,3 +1,5 @@
+// @vitest-environment node
+
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { QueryClient, QueryObserver } from "@tanstack/react-query";
 import {
@@ -17,10 +19,10 @@ vi.mock("../api", () => ({
   api: {
     initiateListModels: (
       runtimeId: string,
-      options?: { force?: boolean },
+      options?: { force?: boolean; workspaceSlug?: string },
     ) => initiateListModels(runtimeId, options),
-    getListModelsResult: (runtimeId: string, requestId: string) =>
-      getListModelsResult(runtimeId, requestId),
+    getListModelsResult: (runtimeId: string, requestId: string, workspaceSlug?: string) =>
+      getListModelsResult(runtimeId, requestId, workspaceSlug),
   },
 }));
 
@@ -59,6 +61,26 @@ beforeEach(() => {
 });
 
 describe("resolveRuntimeModels", () => {
+  it("keeps onboarding discovery, polling and cache in the target workspace", async () => {
+    vi.useFakeTimers();
+    try {
+      initiateListModels.mockResolvedValue(request({ status: "pending" }));
+      getListModelsResult.mockResolvedValue(request({ status: "completed", models: catalog }));
+      const scope = { id: "new-workspace", slug: "new-workspace-slug" };
+      const options = runtimeModelsOptions("rt-1", scope);
+      const client = new QueryClient();
+      const result = client.fetchQuery(options);
+      await vi.advanceTimersByTimeAsync(500);
+      expect((await result).models).toEqual(catalog);
+      expect(initiateListModels).toHaveBeenCalledWith("rt-1", { workspaceSlug: scope.slug });
+      expect(getListModelsResult).toHaveBeenCalledWith("rt-1", "req-1", scope.slug);
+      expect(options.queryKey).toContain(scope.id);
+      expect(client.getQueryData(runtimeModelsKeys.forRuntime("rt-1", "other-workspace"))).toBeUndefined();
+      client.clear();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
   // The server answers a warm runtime straight from its catalog cache
   // (MUL-5444). That response is already terminal, so discovery must resolve on
   // the POST alone — one round trip, no polling, no spinner.
@@ -143,7 +165,7 @@ describe("resolveRuntimeModels", () => {
     expect(result.models).toEqual(catalog);
     expect(result.supported).toBe(true);
     expect(getListModelsResult).toHaveBeenCalledTimes(2);
-    expect(getListModelsResult).toHaveBeenLastCalledWith("rt-1", "req-1");
+    expect(getListModelsResult).toHaveBeenLastCalledWith("rt-1", "req-1", undefined);
   });
 
   // MUL-6606 review: the client budget has to cover the server's pending AND
@@ -277,7 +299,7 @@ describe("runtimeModelsOptions", () => {
   it("keeps unused entries long enough to render instantly on return", () => {
     const options = runtimeModelsOptions("rt-1");
     expect(options.gcTime).toBeGreaterThanOrEqual(LIVE_MODELS_STALE_TIME_MS);
-    expect(options.queryKey).toEqual(["runtimes", "models", "rt-1"]);
+    expect(options.queryKey).toEqual(["runtimes", "models", "", "rt-1"]);
     expect(options.enabled).toBe(true);
   });
 

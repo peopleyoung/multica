@@ -120,7 +120,7 @@ func TestSyncWorkspacesSkipsReposRefreshOnExistingWorkspace(t *testing.T) {
 		t.Fatalf("precondition: expected co-author hook to start enabled")
 	}
 
-	if err := d.syncWorkspacesFromAPI(context.Background(), false); err != nil {
+	if err := d.syncWorkspacesFromAPI(context.Background()); err != nil {
 		t.Fatalf("syncWorkspacesFromAPI: %v", err)
 	}
 
@@ -322,7 +322,7 @@ func TestSyncWorkspacesPublishesCoAuthoredByState(t *testing.T) {
 		json.RawMessage(`{"co_authored_by_enabled":false}`),
 	)
 
-	if err := d.syncWorkspacesFromAPI(context.Background(), false); err != nil {
+	if err := d.syncWorkspacesFromAPI(context.Background()); err != nil {
 		t.Fatalf("syncWorkspacesFromAPI: %v", err)
 	}
 

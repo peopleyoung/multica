@@ -1,10 +1,5 @@
 package agent
 
-import (
-	"context"
-	"fmt"
-)
-
 // BuiltinRuntime describes a built-in runtime identity that the daemon probes
 // and registers automatically — independent of the custom runtime profile
 // protocol_family whitelist. Multiple runtime identities can share one
@@ -58,22 +53,7 @@ type BuiltinRuntime struct {
 	// ProviderLabel is the label used in log/error messages (passed to
 	// piBackend.providerLabel).
 	ProviderLabel string
-
-	// ModelDiscovery is the strategy for discovering available models.
-	// When set, it replaces the protocol family's discovery entirely — omp
-	// uses `omp models --json`, a different command and output shape from
-	// pi's `--list-models`. When nil, ListModels returns an empty catalog
-	// rather than falling back to the family's command: running a
-	// semantically incompatible one (omp exits non-zero on `--list-models`)
-	// is worse than degrading to manual entry.
-	ModelDiscovery ModelDiscoveryFunc
 }
-
-// ModelDiscoveryFunc discovers available models for a runtime identity.
-// It receives the context and the resolved command — executable plus the
-// runtime's launch prefix — and returns a model catalog. Discovery failures
-// propagate to the picker, which shows the reason and supports manual entry.
-type ModelDiscoveryFunc func(ctx context.Context, runtimeCmd Command) ([]Model, error)
 
 // BuiltinRuntimes is the registry of built-in runtime identities that are
 // NOT in SupportedTypes (they are protocol-family derivatives, not families
@@ -95,7 +75,6 @@ var BuiltinRuntimes = []BuiltinRuntime{
 		LaunchHeader:      "omp (json mode)",
 		DefaultExecutable: "omp",
 		ProviderLabel:     "omp",
-		ModelDiscovery:    discoverOmpModels,
 	},
 }
 
@@ -110,13 +89,6 @@ func BuiltinRuntimeByID(id string) (BuiltinRuntime, bool) {
 	return BuiltinRuntime{}, false
 }
 
-// IsBuiltinRuntime reports whether id is a registered built-in runtime
-// identity (as opposed to a protocol family in SupportedTypes).
-func IsBuiltinRuntime(id string) bool {
-	_, ok := BuiltinRuntimeByID(id)
-	return ok
-}
-
 // BuiltinRuntimeCommands returns the default CLI command names for all
 // built-in runtimes, for the daemon's defaultAgentCommandNames list.
 func BuiltinRuntimeCommands() []string {
@@ -125,64 +97,6 @@ func BuiltinRuntimeCommands() []string {
 		cmds[i] = r.DefaultCommand
 	}
 	return cmds
-}
-
-// backendOverrideApplicator is the interface that lets a descriptor apply
-// per-runtime overrides (executable, label) to the backend its protocol family
-// returned. A family whose backend does not implement it cannot host a runtime
-// identity at all: NewRuntime fails closed rather than handing back a backend
-// with the overrides silently dropped.
-type backendOverrideApplicator interface {
-	applyBuiltinRuntimeOverrides(desc BuiltinRuntime)
-}
-
-// piBackend already implements this via its defaultExecutable and
-// providerLabel fields. The method is defined here (not in pi.go) to keep
-// the descriptor→backend contract in one file.
-func (b *piBackend) applyBuiltinRuntimeOverrides(desc BuiltinRuntime) {
-	b.defaultExecutable = desc.DefaultExecutable
-	b.providerLabel = desc.ProviderLabel
-}
-
-// ResolveBackend is the single production entry point the daemon uses to
-// construct a backend from a provider key. It routes built-in runtime
-// identities (e.g. "omp") through NewRuntime, and protocol families (e.g.
-// "pi", "claude") through New. This keeps both factories meaning exactly one
-// thing: New() is family-only, NewRuntime() is runtime-identity-only, and
-// the daemon never has to know which is which.
-func ResolveBackend(provider string, cfg Config) (Backend, error) {
-	if IsBuiltinRuntime(provider) {
-		return NewRuntime(provider, cfg)
-	}
-	return New(provider, cfg)
-}
-
-// NewRuntime creates a Backend for a built-in runtime identity (e.g. "omp").
-// It builds the descriptor's protocol family backend via New(), then applies
-// the per-runtime overrides through the backendOverrideApplicator interface.
-// This is the production entry point for runtime identities; New() is
-// family-only and rejects runtime ids.
-//
-// Fails closed: if the protocol family backend does not implement
-// backendOverrideApplicator, the descriptor's overrides cannot be applied and
-// the runtime would launch under the wrong executable and label — so
-// NewRuntime returns an error rather than returning an unmodified backend.
-func NewRuntime(runtimeID string, cfg Config) (Backend, error) {
-	desc, ok := BuiltinRuntimeByID(runtimeID)
-	if !ok {
-		return nil, fmt.Errorf("unknown runtime identity: %q", runtimeID)
-	}
-	cfg.provider = runtimeID
-	backend, err := New(desc.ProtocolFamily, cfg)
-	if err != nil {
-		return nil, fmt.Errorf("runtime %q (family %q): %w", runtimeID, desc.ProtocolFamily, err)
-	}
-	applicator, ok := backend.(backendOverrideApplicator)
-	if !ok {
-		return nil, fmt.Errorf("runtime %q: protocol family %q backend %T does not support runtime overrides", runtimeID, desc.ProtocolFamily, backend)
-	}
-	applicator.applyBuiltinRuntimeOverrides(desc)
-	return backend, nil
 }
 
 // ProfileRuntimeType preserves profiles authored before runtime identity was stored.

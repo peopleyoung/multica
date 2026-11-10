@@ -29,7 +29,7 @@ import {
 import { agentTaskSnapshotOptions } from "@multica/core/agents";
 import {
   deriveRuntimeHealth,
-  isRuntimeUsableForUser,
+  canReadRuntimeData,
   runtimeProfileListOptions,
   runtimeUsageOptions,
 } from "@multica/core/runtimes";
@@ -380,7 +380,7 @@ export function canReadRuntimeUsage(
   runtime: AgentRuntime,
   currentUserId: string | null,
 ): boolean {
-  return isRuntimeUsableForUser(runtime, currentUserId);
+  return canReadRuntimeData(runtime, currentUserId);
 }
 
 export function CostCell({

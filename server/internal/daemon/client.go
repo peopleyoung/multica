@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/url"
 	"runtime"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -203,6 +204,7 @@ func daemonHTTPClientCapabilities() string {
 
 func daemonCommonCapabilities() []string {
 	return []string{
+		protocol.DaemonCapabilityNativeRuntimeV1,
 		protocol.DaemonCapabilitySkillBundlesV1,
 		protocol.DaemonCapabilityCoalescedCommentsV1,
 		protocol.DaemonCapabilityExecutionManifestV1,
@@ -1074,16 +1076,41 @@ func (c *Client) Deregister(ctx context.Context, runtimeIDs []string, reasons ma
 
 // RegisterResponse holds the server's response to a daemon registration.
 type RegisterResponse struct {
-	Runtimes     []Runtime       `json:"runtimes"`
-	Repos        []RepoData      `json:"repos"`
-	ReposVersion string          `json:"repos_version"`
-	Settings     json.RawMessage `json:"settings,omitempty"`
+	ServerCapabilities    []string                       `json:"server_capabilities"`
+	NativeRuntimeProtocol protocol.NativeRuntimeProtocol `json:"native_runtime_protocol"`
+	Runtimes              []Runtime                      `json:"runtimes"`
+	Repos                 []RepoData                     `json:"repos"`
+	ReposVersion          string                         `json:"repos_version"`
+	Settings              json.RawMessage                `json:"settings,omitempty"`
 }
 
 func (c *Client) Register(ctx context.Context, req map[string]any) (*RegisterResponse, error) {
 	var resp RegisterResponse
 	if err := c.postJSON(ctx, "/api/daemon/register", req, &resp); err != nil {
 		return nil, err
+	}
+	// Check the offer too: an old API can return unknown (or omit runtimes)
+	// instead of echoing a provider it does not understand.
+	offerJSON, err := json.Marshal(req["runtimes"])
+	if err != nil {
+		return nil, fmt.Errorf("encode runtime offer: %w", err)
+	}
+	type runtimeOffer struct {
+		Type string `json:"type"`
+	}
+	var offers []runtimeOffer
+	if err := json.Unmarshal(offerJSON, &offers); err != nil {
+		return nil, fmt.Errorf("decode runtime offer: %w", err)
+	}
+	offeredNative := slices.ContainsFunc(offers, func(offer runtimeOffer) bool { return strings.EqualFold(strings.TrimSpace(offer.Type), "native") })
+	returnedNative := slices.ContainsFunc(resp.Runtimes, func(runtime Runtime) bool { return runtime.Provider == "native" })
+	if offeredNative || returnedNative {
+		if !resp.NativeRuntimeProtocol.Supports(protocol.NativeRuntimeVersion) || !slices.Contains(resp.ServerCapabilities, protocol.DaemonCapabilityNativeRuntimeV1) {
+			return nil, errors.New("server does not support native-runtime-v1; upgrade the API before registering a native daemon")
+		}
+		if offeredNative && !returnedNative {
+			return nil, errors.New("server did not register the offered native runtime")
+		}
 	}
 	return &resp, nil
 }

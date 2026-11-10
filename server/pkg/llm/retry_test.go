@@ -154,7 +154,7 @@ func TestMaxRetriesDoesNotBoundCompatibilityRetries(t *testing.T) {
 		_, _ = io.WriteString(w, `{"id":"cmpl-1","object":"chat.completion","choices":[{"index":0,"message":{"role":"assistant","content":"{}"},"finish_reason":"stop"}]}`)
 	})
 
-	c := New(Config{APIKey: "k", BaseURL: srv.URL, MaxRetries: retries(0)})
+	c := New(Config{APIKey: "k", BaseURL: srv.URL, DefaultModel: "legacy-model", MaxRetries: retries(0)})
 	if _, err := c.GenerateJSON(context.Background(), "legacy-model", "Return JSON.", "go", 0.3, 800); err != nil {
 		t.Fatalf("GenerateJSON failed: %v", err)
 	}

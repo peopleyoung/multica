@@ -260,6 +260,8 @@ export function AgentDetailInspector({
                   model: "",
                   thinking_level: "",
                   service_tier: "",
+                  runtime_config: {},
+                  custom_args: [],
                 })
               }
             />
@@ -272,13 +274,14 @@ export function AgentDetailInspector({
               variant="field"
               showLabel={false}
               runtimeId={agent.runtime_id}
+              runtimeProvider={runtime?.provider}
               runtimeOnline={canDiscoverRuntimeModels}
               value={agent.model ?? ""}
               canEdit={canEdit}
               onChange={handleModelChange}
             />
           </SettingsRow>
-          <ThinkingSettingField
+          {runtime?.provider !== "native" && <ThinkingSettingField
             label={t(($) => $.inspector.prop_thinking)}
             runtimeId={agent.runtime_id}
             runtimeOnline={canDiscoverRuntimeModels}
@@ -289,8 +292,8 @@ export function AgentDetailInspector({
             onChange={(thinkingLevel) =>
               update({ thinking_level: thinkingLevel })
             }
-          />
-          <ServiceTierSettingField
+          />}
+          {runtime?.provider !== "native" && <ServiceTierSettingField
             label={t(($) => $.inspector.prop_speed)}
             runtimeId={agent.runtime_id}
             runtimeOnline={canDiscoverRuntimeModels}
@@ -299,7 +302,7 @@ export function AgentDetailInspector({
             value={agent.service_tier ?? ""}
             canEdit={canEdit}
             onChange={(serviceTier) => update({ service_tier: serviceTier })}
-          />
+          />}
           <SettingsRow
             label={t(($) => $.inspector.prop_concurrency)}
             size="select-wide"

@@ -1,11 +1,17 @@
 import { queryOptions, type QueryClient } from "@tanstack/react-query";
 import { api } from "../api";
 import type { RuntimeModelsResult } from "../types/agent";
+import { getCurrentWsId } from "../platform/workspace-storage";
+
+export interface RuntimeModelScope {
+  id: string;
+  slug?: string;
+}
 
 export const runtimeModelsKeys = {
   all: () => ["runtimes", "models"] as const,
-  forRuntime: (runtimeId: string) =>
-    [...runtimeModelsKeys.all(), runtimeId] as const,
+  forRuntime: (runtimeId: string, workspaceId = getCurrentWsId() ?? "") =>
+    [...runtimeModelsKeys.all(), workspaceId, runtimeId] as const,
 };
 
 const POLL_INTERVAL_MS = 500;
@@ -67,11 +73,11 @@ export const MODELS_GC_TIME_MS = 30 * 60_000;
 // window past what the server itself promises.
 export async function resolveRuntimeModels(
   runtimeId: string,
-  options: { force?: boolean } = {},
+  options: { force?: boolean; workspaceSlug?: string } = {},
 ): Promise<RuntimeModelsResult> {
   const initial =
-    options.force === true
-      ? await api.initiateListModels(runtimeId, { force: true })
+    options.force === true || options.workspaceSlug
+      ? await api.initiateListModels(runtimeId, options)
       : await api.initiateListModels(runtimeId);
   const start = Date.now();
   let current = initial;
@@ -80,7 +86,7 @@ export async function resolveRuntimeModels(
       throw new Error("model discovery timed out");
     }
     await new Promise((resolve) => setTimeout(resolve, POLL_INTERVAL_MS));
-    current = await api.getListModelsResult(runtimeId, initial.id);
+    current = await api.getListModelsResult(runtimeId, initial.id, options.workspaceSlug);
   }
   // Only an explicit `completed` is a catalog. Anything else — failed, timeout,
   // or a status this client does not know (newer server, or a response that fell
@@ -119,12 +125,18 @@ export function staleTimeFor(data: RuntimeModelsResult | undefined): number {
   return data.cached ? 0 : LIVE_MODELS_STALE_TIME_MS;
 }
 
-export function runtimeModelsOptions(runtimeId: string | null | undefined) {
+// Onboarding supplies its target explicitly before there is a workspace route.
+// Route-mounted callers use the platform mirror only to namespace their cache.
+export function runtimeModelsOptions(
+  runtimeId: string | null | undefined,
+  workspace?: RuntimeModelScope,
+) {
   return queryOptions({
     queryKey: runtimeId
-      ? runtimeModelsKeys.forRuntime(runtimeId)
+      ? runtimeModelsKeys.forRuntime(runtimeId, workspace?.id)
       : runtimeModelsKeys.all(),
-    queryFn: () => resolveRuntimeModels(runtimeId as string),
+    queryFn: () =>
+      resolveRuntimeModels(runtimeId as string, { workspaceSlug: workspace?.slug }),
     enabled: Boolean(runtimeId),
     staleTime: (query) => staleTimeFor(query.state.data),
     gcTime: MODELS_GC_TIME_MS,
@@ -139,10 +151,15 @@ export function runtimeModelsOptions(runtimeId: string | null | undefined) {
 export function refreshRuntimeModels(
   queryClient: QueryClient,
   runtimeId: string,
+  workspace?: RuntimeModelScope,
 ): Promise<RuntimeModelsResult> {
   return queryClient.fetchQuery({
-    ...runtimeModelsOptions(runtimeId),
-    queryFn: () => resolveRuntimeModels(runtimeId, { force: true }),
+    ...runtimeModelsOptions(runtimeId, workspace),
+    queryFn: () =>
+      resolveRuntimeModels(runtimeId, {
+        force: true,
+        ...(workspace?.slug ? { workspaceSlug: workspace.slug } : {}),
+      }),
     staleTime: 0,
   });
 }

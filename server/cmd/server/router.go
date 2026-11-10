@@ -36,6 +36,7 @@ import (
 	"github.com/multica-ai/multica/server/internal/integrations/wecom"
 	obsmetrics "github.com/multica-ai/multica/server/internal/metrics"
 	"github.com/multica-ai/multica/server/internal/middleware"
+	"github.com/multica-ai/multica/server/internal/modelcontrol"
 	"github.com/multica-ai/multica/server/internal/realtime"
 	"github.com/multica-ai/multica/server/internal/seatcapacity"
 	"github.com/multica-ai/multica/server/internal/service"
@@ -260,6 +261,12 @@ type RouterOptions struct {
 	// than read here, for the same fail-the-boot-in-main-only reason: the raw
 	// value is validated by parseLLMDisableThinking before the router exists.
 	LLMDisableThinking bool
+	LLMCapabilities    llm.Capabilities
+	LLMLimits          modelcontrol.Limits
+
+	// ComposioHTTPClient supplies the outbound transport for the Composio SDK.
+	// Nil uses the SDK default.
+	ComposioHTTPClient *http.Client
 }
 
 func buildChannelSupervisor(
@@ -443,6 +450,9 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 		LLMDefaultModel:          strings.TrimSpace(os.Getenv("MULTICA_LLM_DEFAULT_MODEL")),
 		LLMMaxRetries:            opts.LLMMaxRetries,
 		LLMDisableThinking:       opts.LLMDisableThinking,
+		LLMCapabilities:          opts.LLMCapabilities,
+		LLMLimits:                opts.LLMLimits,
+		ModelCallMetrics:         opts.BusinessMetrics,
 		ServerVersion:            normalizeServerVersion(version),
 	}
 	h := handler.New(queries, pool, hub, bus, emailSvc, store, cfSigner, analyticsClient, signupConfig, daemonHub)
@@ -1253,7 +1263,7 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 		if !featureflags.ComposioMCPAppsEnabled(context.Background(), opts.FeatureFlags) {
 			slog.Info("composio integration disabled (feature flag off)")
 		} else {
-			sdkClient, err := composiosdk.NewClient(composiosdk.Options{APIKey: composioAPIKey})
+			sdkClient, err := composiosdk.NewClient(composiosdk.Options{APIKey: composioAPIKey, HTTPClient: opts.ComposioHTTPClient})
 			if err != nil {
 				slog.Error("composio: SDK client init failed; composio integration disabled", "error", err)
 			} else {
@@ -1304,6 +1314,7 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 			slog.Error("vcs: secretbox.New failed; vcs integration disabled", "error", err)
 		} else {
 			h.VCSSecretBox = box
+			h.ModelSecretBox = box
 			slog.Info("vcs integration enabled")
 		}
 	} else {
@@ -1505,8 +1516,10 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 	authRL := middleware.RateLimit(rdb, envPositiveInt("RATE_LIMIT_AUTH", 5), time.Minute, trustedProxies)
 	authVerifyRL := middleware.RateLimit(rdb, envPositiveInt("RATE_LIMIT_AUTH_VERIFY", 20), time.Minute, trustedProxies)
 	contactSalesRL := middleware.RateLimit(rdb, envPositiveInt("RATE_LIMIT_CONTACT_SALES", 5), time.Hour, trustedProxies)
-	r.With(authRL).Post("/auth/send-code", h.SendCode)
-	r.With(authVerifyRL).Post("/auth/verify-code", h.VerifyCode)
+	r.With(authRL).Post("/auth/register", h.RegisterPasswordAccount)
+	r.With(authRL).Post("/auth/login", h.PasswordLogin)
+	r.With(authRL).Post("/auth/send-code", h.EmailCodeRetired)
+	r.With(authVerifyRL).Post("/auth/verify-code", h.EmailCodeRetired)
 	r.With(authRL).Post("/auth/google", h.GoogleLogin)
 	r.Post("/auth/logout", h.Logout)
 
@@ -1557,6 +1570,7 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 		r.Use(middleware.DaemonAuth(queries, patCache, daemonTokenCache, cloudPATVerifier))
 
 		r.Post("/register", h.DaemonRegister)
+		r.Get("/native/config", h.NativeModelConfig)
 		r.Post("/deregister", h.DaemonDeregister)
 		r.Post("/heartbeat", h.DaemonHeartbeat)
 		r.Get("/ws", h.DaemonWebSocket)
@@ -1587,6 +1601,12 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 		r.Post("/runtimes/{runtimeId}/local-skills/import/{requestId}/result", h.ReportLocalSkillImportResult)
 
 		r.Get("/tasks/{taskId}/status", h.GetTaskStatus)
+		r.Post("/tasks/{taskId}/native/inference", h.NativeInference)
+		r.Post("/tasks/{taskId}/native/attachment", h.NativeReadAttachment)
+		r.Post("/tasks/{taskId}/native/session", h.AcquireNativeSession)
+		r.Post("/tasks/{taskId}/native/checkpoint/{operation}", h.NativeCheckpoint)
+		r.Post("/tasks/{taskId}/native/write-result", h.NativeWriteResult)
+		r.Post("/tasks/{taskId}/native/job-event", h.NativeJobEvent)
 		r.Post("/tasks/{taskId}/start", h.StartTask)
 		r.Post("/tasks/{taskId}/supplements/claim", h.ClaimTaskSupplement)
 		r.Post("/tasks/{taskId}/supplements/{commentId}/ack", h.AckTaskSupplement)
@@ -1640,6 +1660,7 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 	r.Group(func(r chi.Router) {
 		r.Use(middleware.Auth(queries, patCache, cloudPATVerifier, cfSigner))
 		r.Use(middleware.RefreshCloudFrontCookies(cfSigner))
+		r.Use(h.NativeWrite)
 
 		// Plugin Action API. Called by the HOST PAGE on the signed-in user's
 		// session after a surface asks for something over the postMessage
@@ -1722,6 +1743,7 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 					// The payload is names and transports only; the stored
 					// entries are write-only.
 					r.Get("/mcp-servers", h.ListWorkspaceMcpServers)
+					r.Get("/models", h.ListWorkspaceModels)
 					// Installed Plugins are member-visible so a member can
 					// see what is mounted in their workspace and which scopes
 					// it holds; install / configure / remove stay admin-only.
@@ -1746,6 +1768,11 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 					// Creating an entry binds it to no agent; an agent owner
 					// adds it to their own agent through the agent routes.
 					r.Post("/mcp-servers", h.CreateWorkspaceMcpServer)
+					r.Post("/models", h.SaveWorkspaceModel)
+					r.Post("/models/test", h.TestWorkspaceModel)
+					r.Post("/models/{modelId}/test", h.TestWorkspaceModel)
+					r.Put("/models/{modelId}", h.SaveWorkspaceModel)
+					r.Delete("/models/{modelId}", h.DeleteWorkspaceModel)
 					r.Put("/mcp-servers/{serverId}", h.UpdateWorkspaceMcpServer)
 					r.Delete("/mcp-servers/{serverId}", h.DeleteWorkspaceMcpServer)
 					r.Post("/share-links", h.CreateShareLink)

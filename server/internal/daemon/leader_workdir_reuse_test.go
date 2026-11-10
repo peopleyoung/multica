@@ -7,7 +7,7 @@ import (
 	"io"
 	"io/fs"
 	"log/slog"
-	"net/http"
+
 	"net/http/httptest"
 	"os"
 	"path/filepath"
@@ -37,7 +37,7 @@ func TestRunTaskSquadLeaderReusesWorkdirBeforeGCMetaWritten(t *testing.T) {
 	first := leaderReuseTestTask("task-first")
 	first.WorkspaceSlug = "original-workspace"
 	first.IssueIdentifier = "MUL-6063"
-	firstResult, err := d.runTask(context.Background(), first, "claude", 0, d.logger)
+	firstResult, err := d.runTask(context.Background(), first, "native", 0, d.logger)
 	if err != nil {
 		t.Fatalf("first runTask: %v", err)
 	}
@@ -58,7 +58,7 @@ func TestRunTaskSquadLeaderReusesWorkdirBeforeGCMetaWritten(t *testing.T) {
 	second.IssueIdentifier = "NEW-6063"
 	second.PriorSessionID = firstResult.SessionID
 	second.PriorWorkDir = firstResult.WorkDir
-	secondResult, err := d.runTask(context.Background(), second, "claude", 0, d.logger)
+	secondResult, err := d.runTask(context.Background(), second, "native", 0, d.logger)
 	if err != nil {
 		t.Fatalf("second runTask: %v", err)
 	}
@@ -68,13 +68,11 @@ func TestRunTaskSquadLeaderReusesWorkdirBeforeGCMetaWritten(t *testing.T) {
 	if !sameDir(t, secondResult.WorkDir, firstResult.WorkDir) {
 		t.Fatalf("second WorkDir = %q, want reused leader workdir %q", secondResult.WorkDir, firstResult.WorkDir)
 	}
-	args, err := os.ReadFile(argsFile)
-	if err != nil {
-		t.Fatalf("read claude args: %v", err)
+	if secondResult.SessionID != firstResult.SessionID {
+		t.Fatal("native continuation changed its durable session")
 	}
-	if !strings.Contains(string(args), "--resume\nsession-leader-reuse\n") {
-		t.Fatalf("second claude invocation did not resume prior session; args:\n%s", args)
-	}
+	_ = argsFile
+
 }
 
 func TestRunTaskSquadLeaderDoesNotReuseExternalPriorWorkdir(t *testing.T) {
@@ -88,7 +86,7 @@ func TestRunTaskSquadLeaderDoesNotReuseExternalPriorWorkdir(t *testing.T) {
 	task.PriorSessionID = "session-leader-reuse"
 	task.PriorWorkDir = externalWorkDir
 
-	result, err := d.runTask(context.Background(), task, "claude", 0, d.logger)
+	result, err := d.runTask(context.Background(), task, "native", 0, d.logger)
 	if err != nil {
 		t.Fatalf("runTask: %v", err)
 	}
@@ -178,7 +176,7 @@ func TestRunTaskReusesPriorWorkdirForFreshSession(t *testing.T) {
 	run := func(task Task) TaskResult {
 		t.Helper()
 		task.IsLeaderTask = false
-		result, err := d.runTask(context.Background(), task, "claude", 0, d.logger)
+		result, err := d.runTask(context.Background(), task, "native", 0, d.logger)
 		if err != nil {
 			t.Fatalf("runTask %s: %v", task.ID, err)
 		}
@@ -355,39 +353,25 @@ func TestShouldReusePriorWorkdirSquadLeaderRejectsSymlinkEscape(t *testing.T) {
 func newLeaderReuseTestDaemon(t *testing.T) (*Daemon, string, func()) {
 	t.Helper()
 
-	testDir := t.TempDir()
-	fakeBin := filepath.Join(testDir, "claude")
-	argsFile := filepath.Join(testDir, "claude-args.txt")
-	script := `#!/bin/sh
-printf '%s\n' "$@" >> "` + argsFile + `"
-printf '%s\n' '--invocation-end--' >> "` + argsFile + `"
-IFS= read -r _
-printf '%s\n' '{"type":"system","session_id":"session-leader-reuse"}'
-printf '%s\n' '{"type":"result","subtype":"success","is_error":false,"session_id":"session-leader-reuse","result":"done"}'
-`
-	writeTestExecutable(t, fakeBin, []byte(script))
-
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		_, _ = w.Write([]byte(`{}`))
-	}))
+	srv := httptest.NewServer(newNativeLifecycleFixture(t))
 
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	d := &Daemon{
 		client:         NewClient(srv.URL),
 		logger:         logger,
 		workspaces:     make(map[string]*workspaceState),
-		runtimeIndex:   map[string]Runtime{"rt-leader": {ID: "rt-leader", Provider: "claude"}},
+		runtimeIndex:   map[string]Runtime{"rt-leader": {ID: "rt-leader", Provider: "native"}},
 		activeEnvRoots: make(map[string]int),
 		cfg: Config{
 			WorkspacesRoot: t.TempDir(),
 			AgentTimeout:   5 * time.Second,
 			ServerBaseURL:  srv.URL,
 			Agents: map[string]AgentEntry{
-				"claude": {Path: fakeBin},
+				"native": {},
 			},
 		},
 	}
-	return d, argsFile, srv.Close
+	return d, "", srv.Close
 }
 
 func writeLeaderTaskMarker(t *testing.T, workDir, agentID, issueID string) {
@@ -450,7 +434,8 @@ func writeChatManagedEnvProvenance(t *testing.T, workDir, workspaceID, chatSessi
 
 func leaderReuseTestTask(id string) Task {
 	return Task{
-		ID:           id,
+		ID:                id,
+		NativeInputTaskID: id, RemoteMCPDaemonToken: "mdt_fixture",
 		WorkspaceID:  "ws-leader",
 		RuntimeID:    "rt-leader",
 		IssueID:      "issue-leader",
@@ -788,7 +773,7 @@ func TestRunTaskCancelledWaitingForThePriorWorkdirStopsInsteadOfPreparing(t *tes
 	defer cleanup()
 
 	first := leaderReuseTestTask("task-first")
-	firstResult, err := d.runTask(context.Background(), first, "claude", 0, d.logger)
+	firstResult, err := d.runTask(context.Background(), first, "native", 0, d.logger)
 	if err != nil {
 		t.Fatalf("first runTask: %v", err)
 	}
@@ -812,7 +797,7 @@ func TestRunTaskCancelledWaitingForThePriorWorkdirStopsInsteadOfPreparing(t *tes
 	logs := &cancelOnLogWriter{trigger: []byte("prior workdir is still held by the previous run"), cancel: cancel}
 	d.logger = slog.New(slog.NewTextHandler(logs, nil))
 
-	if _, err = d.runTask(ctx, second, "claude", 0, d.logger); !errors.Is(err, context.Canceled) {
+	if _, err = d.runTask(ctx, second, "native", 0, d.logger); !errors.Is(err, context.Canceled) {
 		t.Fatalf("runTask returned %v, want the cancellation that ended the wait", err)
 	}
 
@@ -1081,7 +1066,7 @@ func TestRunTaskDeclinesReuseWhenTheClaimedDirectoryIsSwappedBeforeUse(t *testin
 	_ = argsFile
 
 	first := leaderReuseTestTask("task-first")
-	firstResult, err := d.runTask(context.Background(), first, "claude", 0, d.logger)
+	firstResult, err := d.runTask(context.Background(), first, "native", 0, d.logger)
 	if err != nil {
 		t.Fatalf("first runTask: %v", err)
 	}
@@ -1114,7 +1099,7 @@ func TestRunTaskDeclinesReuseWhenTheClaimedDirectoryIsSwappedBeforeUse(t *testin
 	second := leaderReuseTestTask("task-second")
 	second.PriorSessionID = firstResult.SessionID
 	second.PriorWorkDir = firstResult.WorkDir
-	secondResult, err := d.runTask(context.Background(), second, "claude", 0, d.logger)
+	secondResult, err := d.runTask(context.Background(), second, "native", 0, d.logger)
 	if err != nil {
 		t.Fatalf("second runTask: %v", err)
 	}

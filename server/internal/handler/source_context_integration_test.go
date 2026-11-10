@@ -17,6 +17,7 @@ import (
 	"github.com/multica-ai/multica/server/internal/events"
 	"github.com/multica-ai/multica/server/internal/middleware"
 	"github.com/multica-ai/multica/server/internal/service"
+	"github.com/multica-ai/multica/server/internal/testutil"
 	"github.com/multica-ai/multica/server/internal/util"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 	"github.com/multica-ai/multica/server/pkg/protocol"
@@ -331,28 +332,9 @@ func TestCommentSourceContextLifecycle(t *testing.T) {
 	}
 
 	t.Run("full workspace skips source attachment copies and enqueue", func(t *testing.T) {
-		var agentID string
-		if err := testPool.QueryRow(ctx, `
-			SELECT id FROM agent
-			WHERE workspace_id = $1 AND runtime_id = $2 AND archived_at IS NULL
-			ORDER BY created_at ASC LIMIT 1
-		`, testWorkspaceID, testRuntimeID).Scan(&agentID); err != nil {
-			t.Fatalf("load source-context test agent: %v", err)
-		}
-		var originalMetadata string
-		if err := testPool.QueryRow(ctx, `SELECT metadata::text FROM agent_runtime WHERE id = $1`, testRuntimeID).Scan(&originalMetadata); err != nil {
-			t.Fatalf("load original runtime metadata: %v", err)
-		}
-		if _, err := testPool.Exec(ctx, `
-			UPDATE agent_runtime
-			SET metadata = '{"cli_version":"0.4.3","capabilities":["source_context_quick_create_v1"]}'::jsonb
-			WHERE id = $1
-		`, testRuntimeID); err != nil {
-			t.Fatalf("enable source-context capability: %v", err)
-		}
-		t.Cleanup(func() {
-			_, _ = testPool.Exec(context.Background(), `UPDATE agent_runtime SET metadata = $1::jsonb WHERE id = $2`, originalMetadata, testRuntimeID)
-		})
+		// A suite-wide runtime heartbeat may have expired before this subtest.
+		runtimeID := dbfx.Runtime(t, "source capture capacity", testutil.Cols{"metadata": []byte(`{"cli_version":"0.4.3","capabilities":["source_context_quick_create_v1"]}`)})
+		agentID := dbfx.Agent(t, "source capture capacity", runtimeID)
 
 		var issueCount int
 		if err := testPool.QueryRow(ctx, `SELECT count(*) FROM issue WHERE workspace_id = $1`, testWorkspaceID).Scan(&issueCount); err != nil {
@@ -680,6 +662,17 @@ func TestCommentSourceContextLifecycle(t *testing.T) {
 	if _, err := cleanupTx.Exec(ctx, `LOCK TABLE issue_source_context_object_intent IN SHARE ROW EXCLUSIVE MODE`); err != nil {
 		t.Fatalf("lock target intent table: %v", err)
 	}
+	// Keep unrelated intents out of this fixture's bounded sweep without
+	// deleting or modifying another test's pending storage work. SKIP LOCKED
+	// must observe these row locks from a separate transaction.
+	unrelatedTx, err := testPool.Begin(ctx)
+	if err != nil {
+		t.Fatalf("begin unrelated intent isolation: %v", err)
+	}
+	defer unrelatedTx.Rollback(ctx)
+	if _, err := unrelatedTx.Exec(ctx, `SELECT storage_key FROM issue_source_context_object_intent WHERE source_context_id <> $1 FOR UPDATE`, contextID); err != nil {
+		t.Fatalf("isolate unrelated intents: %v", err)
+	}
 	if _, err := cleanupTx.Exec(ctx, `
 		UPDATE issue_source_context_object_intent
 		SET created_at = now() - interval '2 hours', next_attempt_at = '-infinity'::timestamptz
@@ -694,7 +687,7 @@ func TestCommentSourceContextLifecycle(t *testing.T) {
 	cleaned, err := testHandler.TaskService.CleanupSourceContextObjectIntents(ctx, 10)
 	testHandler.TaskService.SourceContextStorage = originalObjectStore
 	testHandler.TaskService.Queries = originalQueries
-	if err != nil || cleaned < 3 {
+	if err != nil || cleaned != 3 {
 		t.Fatalf("cleanup target delete intents = %d, err=%v", cleaned, err)
 	}
 	if err := cleanupTx.Commit(ctx); err != nil {

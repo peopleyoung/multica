@@ -1,78 +1,10 @@
 package execenv
 
 import (
-	"encoding/json"
 	"os"
 	"path/filepath"
 	"testing"
 )
-
-// TestPrepareRollsBackSidecarsWhenPrepareFailsInPlace is the regression test for
-// MUL-6132: a local_directory Prepare that fails partway must not leave the
-// daemon task marker (or any other sidecar) in the user's own repository.
-//
-// Before the fix, Prepare wrote the marker early and persisted the manifest that
-// records it last, and the caller receives no Environment on a failure — so a
-// failed Prepare left a marker no code path knew how to remove, which disabled
-// every human-local multica command in that directory tree until someone deleted
-// the file by hand.
-//
-// The induced failure is a pre-existing .cursor/mcp.json, which the managed
-// cursor MCP path refuses to overwrite. It is a pure filesystem failure that
-// needs no agent CLI on the machine, and it lands after the marker is written.
-func TestPrepareRollsBackSidecarsWhenPrepareFailsInPlace(t *testing.T) {
-	workspacesRoot := t.TempDir()
-	userDir := t.TempDir()
-
-	// The user's own content: the file that makes Prepare fail, plus a plain
-	// file that must survive the rollback untouched.
-	cursorDir := filepath.Join(userDir, ".cursor")
-	if err := os.MkdirAll(cursorDir, 0o755); err != nil {
-		t.Fatalf("create .cursor: %v", err)
-	}
-	if err := os.WriteFile(filepath.Join(cursorDir, "mcp.json"), []byte(`{"mine":true}`), 0o644); err != nil {
-		t.Fatalf("seed user mcp.json: %v", err)
-	}
-	userFile := filepath.Join(userDir, "README.md")
-	if err := os.WriteFile(userFile, []byte("user content"), 0o644); err != nil {
-		t.Fatalf("seed user file: %v", err)
-	}
-
-	_, err := Prepare(PrepareParams{
-		WorkspacesRoot: workspacesRoot,
-		WorkspaceID:    "ws-rollback-001",
-		TaskID:         "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
-		AgentName:      "Test Agent",
-		Provider:       "cursor",
-		LocalWorkDir:   userDir,
-		McpConfig:      json.RawMessage(`{"fetch":{"command":"uvx","args":["mcp-server-fetch"]}}`),
-		Task: TaskContextForEnv{
-			IssueID: "11111111-2222-3333-4444-555555555555",
-			AgentID: "99999999-8888-7777-6666-555555555555",
-		},
-	}, testLogger())
-	if err == nil {
-		t.Fatal("Prepare succeeded; expected the pre-existing .cursor/mcp.json to fail it")
-	}
-
-	markerPath := filepath.Join(userDir, TaskContextMarkerRelPath)
-	if _, statErr := os.Stat(markerPath); !os.IsNotExist(statErr) {
-		t.Fatalf("daemon task marker survived a failed Prepare at %s (stat err: %v)", markerPath, statErr)
-	}
-	if _, statErr := os.Stat(filepath.Join(userDir, ".agent_context")); !os.IsNotExist(statErr) {
-		t.Fatalf(".agent_context survived a failed Prepare (stat err: %v)", statErr)
-	}
-
-	// The rollback must be scoped to what Prepare created: the user's own
-	// files, including the one that caused the failure, stay exactly as they
-	// were.
-	if data, readErr := os.ReadFile(userFile); readErr != nil || string(data) != "user content" {
-		t.Fatalf("rollback touched user content: data=%q err=%v", string(data), readErr)
-	}
-	if data, readErr := os.ReadFile(filepath.Join(cursorDir, "mcp.json")); readErr != nil || string(data) != `{"mine":true}` {
-		t.Fatalf("rollback touched the user's mcp.json: data=%q err=%v", string(data), readErr)
-	}
-}
 
 // TestPrepareRollsBackWhenWriteContextFilesFailsAfterMarker covers the earliest
 // failure window there is: writeContextFiles lays the marker down as its very

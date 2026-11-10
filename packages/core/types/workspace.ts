@@ -54,6 +54,7 @@ export interface Member {
 }
 
 export interface User {
+  username?: string | null;
   id: string;
   name: string;
   email: string;

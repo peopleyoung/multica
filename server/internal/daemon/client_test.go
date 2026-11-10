@@ -36,6 +36,7 @@ func TestClient_IdentityHeaders_PostJSON(t *testing.T) {
 			capabilities[strings.TrimSpace(capability)] = true
 		}
 		for _, want := range []string{
+			protocol.DaemonCapabilityNativeRuntimeV1,
 			protocol.DaemonCapabilitySkillBundlesV1,
 			protocol.DaemonCapabilityCoalescedCommentsV1,
 			// The worktree gate is decided entirely from this header: if the

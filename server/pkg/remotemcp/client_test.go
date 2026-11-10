@@ -3,10 +3,63 @@ package remotemcp
 import (
 	"context"
 	"encoding/json"
+	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"net/netip"
 	"strings"
 	"testing"
 )
+
+func TestDiscoverPaginatesToolsAndRejectsRepeatedCursors(t *testing.T) {
+	for _, repeat := range []bool{false, true} {
+		t.Run(fmt.Sprint(repeat), func(t *testing.T) {
+			pages := 0
+			fixture := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				var req struct {
+					ID     json.RawMessage
+					Method string
+					Params struct{ Cursor string }
+				}
+				if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+					t.Error(err)
+					return
+				}
+				w.Header().Set("Content-Type", "application/json")
+				if req.Method == "notifications/initialized" {
+					w.WriteHeader(http.StatusAccepted)
+					return
+				}
+				var result any = map[string]any{"protocolVersion": "2025-03-26"}
+				if req.Method == "tools/list" {
+					pages++
+					if pages > 1 && req.Params.Cursor != "next" {
+						t.Error("cursor missing")
+					}
+					cursor := ""
+					if pages == 1 || repeat {
+						cursor = "next"
+					}
+					result = map[string]any{"tools": []any{map[string]any{"name": fmt.Sprintf("tool-%d", pages), "inputSchema": map[string]string{"type": "object"}}}, "nextCursor": cursor}
+				}
+				_ = json.NewEncoder(w).Encode(map[string]any{"jsonrpc": "2.0", "id": req.ID, "result": result})
+			}))
+			defer fixture.Close()
+			t.Setenv(DevOriginsEnv, fixture.URL)
+			tools, _, err := Discover(context.Background(), fixture.URL, nil, nil, nil)
+			if repeat {
+				if err == nil || !strings.Contains(err.Error(), "cursor") {
+					t.Fatalf("repeated cursor: %v", err)
+				}
+			} else if err != nil || len(tools) != 2 {
+				t.Fatalf("tools=%v err=%v", tools, err)
+			}
+			if pages != 2 {
+				t.Fatalf("pages=%d", pages)
+			}
+		})
+	}
+}
 
 type staticResolver map[string][]netip.Addr
 

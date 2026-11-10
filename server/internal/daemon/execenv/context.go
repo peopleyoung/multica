@@ -161,7 +161,7 @@ func writeContextFiles(workDir, provider string, ctx TaskContextForEnv, manifest
 		return err
 	}
 
-	if len(ctx.AgentSkills) > 0 {
+	if len(ctx.AgentSkills) > 0 && provider != "native" {
 		// Hermes materializes skills into its per-task HERMES_HOME/skills during
 		// Prepare (Hermes has no workspace-relative discovery), so it needs no
 		// workdir-local skills dir at all — skip the resolve too, to avoid

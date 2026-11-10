@@ -32,7 +32,7 @@ func TestExecuteAndDrain_ScopesToolCallIdentity(t *testing.T) {
 		close(results)
 		backend := sessionBackend{session: &agent.Session{Messages: messages, Result: results}}
 		if _, _, err := d.executeAndDrain(context.Background(), backend, "p", agent.ExecOptions{},
-			slog.Default(), "task-call-id", "", &seq); err != nil {
+			slog.Default(), "task-call-id", &seq); err != nil {
 			t.Fatal(err)
 		}
 	}

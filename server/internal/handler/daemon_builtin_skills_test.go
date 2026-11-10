@@ -52,9 +52,9 @@ func TestClaimTaskByRuntime_OnlyCurrentBuiltinSkills(t *testing.T) {
 			ctx := context.Background()
 			runtimeID, _, _ := seedSkillLoadFixture(t, ctx, tc.fixture)
 
-			req := newDaemonTokenRequest("POST", "/api/daemon/runtimes/"+runtimeID+"/tasks/claim", nil, testWorkspaceID, tc.fixture+"-daemon")
+			req := newDaemonTokenRequest("POST", "/api/daemon/runtimes/"+runtimeID+"/tasks/claim", nil, testWorkspaceID, runtimeDaemonID(t, runtimeID))
 			if tc.capabilities != "" {
-				req.Header.Set("X-Client-Capabilities", tc.capabilities)
+				req.Header.Set("X-Client-Capabilities", tc.capabilities+",native-runtime-v1")
 			}
 			req = withURLParam(req, "runtimeId", runtimeID)
 
