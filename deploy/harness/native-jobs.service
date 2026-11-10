@@ -1,0 +1,21 @@
+[Unit]
+Description=Multica independent job service
+After=network.target
+
+[Service]
+Type=simple
+User=multica-jobs
+Group=multica-jobs
+UMask=0077
+StateDirectory=multica-jobs
+StateDirectoryMode=0700
+WorkingDirectory=/var/lib/multica-jobs
+ExecStart=/opt/multica/bin/native-jobs --config /etc/multica/jobs.json
+Restart=on-failure
+RestartSec=5
+KillMode=control-group
+TimeoutStopSec=45
+NoNewPrivileges=true
+
+[Install]
+WantedBy=multi-user.target
